@@ -79,7 +79,7 @@ skillctl add <repository> --path <source-path> [--name NAME] [--ref REF]
 skillctl add <repository> --file <path-to-SKILL.md> --name NAME [--ref REF]
 skillctl sync [NAME]
 skillctl check [NAME]
-skillctl status
+skillctl status [--offline]
 skillctl diff [NAME]
 skillctl update [NAME]
 skillctl remove <NAME>
@@ -90,7 +90,11 @@ Use `-g` or `--global` for global scope. `--json` emits one stable JSON document
 
 `add` clones a Git URL or local Git repository, discovers its default branch when `--ref` is omitted, validates the selected skill, and pins the resolved commit and digest. Use `--path DIRECTORY` to vendor a complete skill tree, including its resources. Use `--file PATH/TO/SKILL.md --name DESTINATION` to install only that file as the destination's root `SKILL.md`; `--name` is required because it defines the containing folder. `--path` and `--file` are mutually exclusive. Local repository paths are stored as absolute paths so later commands work from nested project directories.
 
-`sync` reproduces the exact locked commit without advancing it. `update` follows `source.ref`; use it only after changing the authoritative repository. `check` and `status` are network-free. `diff` compares installed files with the pinned source and reports deterministic added, removed, modified, and type-changed path records describing the installed tree relative to the pin; it may acquire the repository in an isolated temporary checkout. `remove` deletes only verified managed vendored content; a local entry is removed from the lock while its files remain.
+`sync` reproduces the exact locked commit without advancing it. `update` follows `source.ref`; use it only after changing the authoritative repository. `diff` compares installed files with the pinned source and reports deterministic added, removed, modified, and type-changed path records describing the installed tree relative to the pin; it may acquire the repository in an isolated temporary checkout. `remove` deletes only verified managed vendored content; a local entry is removed from the lock while its files remain.
+
+`check` is the deterministic offline integrity gate. It validates the lock and schema, destination safety, installed skill structure, managed markers, declared-name conflicts, and vendored digests without acquiring any source. A clean run prints one concise `OK` summary; any integrity failure is actionable and exits nonzero. It never reports update availability.
+
+`status` is the lifecycle dashboard. By default it queries each unique repository/ref once, then compares every selected skill's upstream digest with its locked digest. Its `LOCAL` column reports `clean`, `modified`, `missing`, `invalid`, or project-owned `local` state. Its `UPSTREAM` column reports `current`, `update_available`, `source_advanced` when the ref moved but that selected skill did not change, `unreachable`, `invalid`, or `not_applicable` for local entries. An unreachable source does not discard local integrity results or make a successfully produced dashboard fail. Use `status --offline` to skip all source access; vendored entries then report `not_checked`, with one footer explaining the skipped upstream checks.
 
 For example, install only this repository's root skill without vendoring its Rust sources:
 
@@ -116,7 +120,11 @@ Global example: `skillctl --global list`. Global and project scopes never mix in
 
 ## JSON and exit behavior
 
-Every JSON response uses a deterministic envelope with `ok`, `scope`, `lock_file`, `skills`, `changes`, and `errors`. Command-specific records add fields without changing those envelope fields. JSON mode prints exactly one document to stdout. Exit code 0 means success (and a clean check); nonzero covers invalid locks, integrity mismatches, unsafe inputs, source failures, refused overwrites, and invalid flag use.
+Every JSON response uses a deterministic envelope with `ok`, `scope`, `lock_file`, `skills`, `changes`, and `errors`. Command-specific records add fields without changing those envelope fields. JSON mode prints exactly one document to stdout.
+
+Status skill records expose separate `local_status` and `upstream_status` fields plus `pinned_commit`, `upstream_commit`, `content_changed`, `upstream_details`, and `recommended_action`. `content_changed` is `true` or `false` after a successful vendored upstream comparison and `null` when it is not applicable or could not be checked. For compatibility, the earlier `state`, `commit`, and `digest` fields remain; `update_status` also remains as an alias of `upstream_status`, but no longer emits the ambiguous legacy value `unknown`. Consumers should migrate to the explicit fields. Status enum values use the underscore spellings shown above.
+
+Exit code 0 means command success and, for `check`, a clean integrity result. Nonzero covers invalid locks, integrity mismatches, unsafe inputs, source failures in commands that require acquisition, refused overwrites, and invalid flag use. `status` reports an unreachable upstream source in the dashboard while exiting 0 because the lifecycle inspection itself completed; lock/schema failures still exit nonzero.
 
 ## Development
 

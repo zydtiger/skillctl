@@ -40,7 +40,7 @@ Keep responsibilities narrow and files reasonably sized. Prefer explicit data pa
 - Never mutate a `mode: local` skill directory.
 - Keep the lock and installed tree mutually consistent with atomic writes or tested rollback protection.
 - Validate the full staged tree and digest before replacing anything. Exclude only the generated marker from source digesting.
-- Keep read-only commands network-free except `diff`, whose isolated pinned checkout must never mutate installed state.
+- Keep `check` deterministically network-free. `status` queries upstream by default and must offer an explicit network-free `--offline` mode; `diff` may acquire its isolated pinned checkout. Read-only acquisition must never mutate installed state.
 - Preserve stable, deterministic JSON because it is a public API.
 
 ## Validation gates

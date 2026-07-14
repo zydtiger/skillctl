@@ -52,8 +52,12 @@ pub(super) enum Command {
     Sync { name: Option<String> },
     /// Check installed integrity without network access
     Check { name: Option<String> },
-    /// Show the local state of every lock entry without network access
-    Status,
+    /// Show local integrity and upstream lifecycle state
+    Status {
+        /// Skip upstream access and report local state only
+        #[arg(long)]
+        offline: bool,
+    },
     /// Compare installed content with the pinned source snapshot
     Diff { name: Option<String> },
     /// Advance vendored entries along their configured source refs

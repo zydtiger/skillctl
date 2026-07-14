@@ -38,7 +38,7 @@ pub(super) fn execute(cli: &Cli, scope: &Scope) -> Result<(Envelope, Vec<String>
         }
         Command::Sync { name } => reconcile::sync(scope, name.as_deref(), cli.force, cli.dry_run),
         Command::Check { name } => inspect::check(scope, name.as_deref()),
-        Command::Status => inspect::status(scope),
+        Command::Status { offline } => inspect::status(scope, *offline),
         Command::Diff { name } => diff::run(scope, name.as_deref()),
         Command::Update { name } => {
             reconcile::update(scope, name.as_deref(), cli.force, cli.dry_run)

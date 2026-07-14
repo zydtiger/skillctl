@@ -13,4 +13,14 @@ fn command_help_smoke_test_matches_readme_surface() {
     ] {
         assert!(help.contains(command));
     }
+
+    let status = fixture
+        .command()
+        .args(["status", "--help"])
+        .output()
+        .unwrap();
+    assert_ok_ref(&status);
+    assert!(String::from_utf8(status.stdout)
+        .unwrap()
+        .contains("--offline"));
 }

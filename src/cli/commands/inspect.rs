@@ -1,19 +1,36 @@
 use super::support::{load_lock, select_names};
 use crate::error::CommandFailure;
 use crate::install::{entry_state, skill_json, EntryState};
-use crate::lockfile::{Mode, SourceSelector};
+use crate::lockfile::{LockFile, Mode, SourceSelector};
 use crate::output::Envelope;
 use crate::scope::Scope;
-use crate::source::validate_skill_tree;
+use crate::source::{acquire_repository, validate_skill_tree};
 use anyhow::Result;
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+#[derive(Debug)]
+struct UpstreamState {
+    status: &'static str,
+    commit: Option<String>,
+    content_changed: Option<bool>,
+    details: Vec<String>,
+}
+
+#[derive(Debug)]
+struct StatusRow {
+    name: String,
+    local: String,
+    upstream: String,
+    pin: String,
+    reference: String,
+    action: String,
+}
 
 pub(super) fn check(scope: &Scope, selected: Option<&str>) -> Result<(Envelope, Vec<String>)> {
     let lock = load_lock(scope)?;
     let names = select_names(&lock, selected)?;
     let mut envelope = Envelope::new(scope);
-    let mut lines = Vec::new();
     let mut failures = Vec::new();
     let mut declared: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (entry_name, entry) in &lock.skills {
@@ -25,9 +42,9 @@ pub(super) fn check(scope: &Scope, selected: Option<&str>) -> Result<(Envelope, 
                 .push(entry_name.clone());
         }
     }
-    for name in names {
-        let entry = lock.skills.get(&name).expect("selected entry");
-        let state = entry_state(scope, &name, entry);
+    for name in &names {
+        let entry = lock.skills.get(name).expect("selected entry");
+        let state = entry_state(scope, name, entry);
         if !matches!(state.state.as_str(), "clean" | "local") {
             failures.push(format!(
                 "`{name}` is {}: {}",
@@ -35,8 +52,7 @@ pub(super) fn check(scope: &Scope, selected: Option<&str>) -> Result<(Envelope, 
                 state.details.join("; ")
             ));
         }
-        lines.push(format!("{name}: {}", state.state));
-        envelope.skills.push(skill_json(&name, entry, Some(&state)));
+        envelope.skills.push(skill_json(name, entry, Some(&state)));
     }
     for (declared_name, entries) in declared {
         if entries.len() > 1
@@ -59,13 +75,87 @@ pub(super) fn check(scope: &Scope, selected: Option<&str>) -> Result<(Envelope, 
         }
         .into());
     }
+    Ok((
+        envelope,
+        vec![format!(
+            "OK: {} lock {} passed offline integrity checks",
+            names.len(),
+            if names.len() == 1 { "entry" } else { "entries" }
+        )],
+    ))
+}
+
+pub(super) fn status(scope: &Scope, offline: bool) -> Result<(Envelope, Vec<String>)> {
+    let lock = load_lock(scope)?;
+    let states = local_states(scope, &lock);
+    let upstream = upstream_states(&lock, offline);
+    let mut envelope = Envelope::new(scope);
+    let mut rows = Vec::new();
+    let mut source_errors = BTreeSet::new();
+
+    for (name, entry) in &lock.skills {
+        let local = states.get(name).expect("known local status entry");
+        let remote = upstream.get(name).expect("known upstream status entry");
+        let action = recommended_action(name, &local.state, remote.status);
+        let resolved = entry.resolved.as_ref();
+        let mut record = skill_json(name, entry, Some(local));
+        record["local_status"] = json!(local.state);
+        record["upstream_status"] = json!(remote.status);
+        record["update_status"] = json!(remote.status);
+        record["pinned_commit"] = json!(resolved.map(|value| value.commit.clone()));
+        record["upstream_commit"] = json!(remote.commit);
+        record["content_changed"] = json!(remote.content_changed);
+        record["upstream_details"] = json!(remote.details);
+        record["recommended_action"] = json!(action);
+        envelope.skills.push(record);
+
+        if !remote.details.is_empty() {
+            let source = entry.source.as_ref().expect("vendored source");
+            source_errors.insert(format!(
+                "{}@{}: {}",
+                source.repository,
+                source.reference,
+                remote.details.join("; ")
+            ));
+        }
+        rows.push(StatusRow {
+            name: name.clone(),
+            local: local.state.clone(),
+            upstream: match remote.status {
+                "not_checked" | "not_applicable" => "-".to_owned(),
+                value => value.to_owned(),
+            },
+            pin: resolved
+                .map(|value| abbreviated_commit(&value.commit))
+                .unwrap_or_else(|| "-".to_owned()),
+            reference: entry
+                .source
+                .as_ref()
+                .map(|source| source.reference.clone())
+                .unwrap_or_else(|| "-".to_owned()),
+            action: match (action.as_str(), remote.status, local.state.as_str()) {
+                ("none", _, _) | (_, "not_checked", "clean") => "-".to_owned(),
+                _ => action,
+            },
+        });
+    }
+
+    let mut lines = render_status_table(&rows);
+    if offline
+        && lock
+            .skills
+            .values()
+            .any(|entry| entry.mode == Mode::Vendored)
+    {
+        lines.push("Upstream checks were skipped by --offline.".to_owned());
+    }
+    for error in source_errors {
+        lines.push(format!("Upstream error: {error}"));
+    }
     Ok((envelope, lines))
 }
 
-pub(super) fn status(scope: &Scope) -> Result<(Envelope, Vec<String>)> {
-    let lock = load_lock(scope)?;
-    let mut envelope = Envelope::new(scope);
-    let mut lines = Vec::new();
+fn local_states(scope: &Scope, lock: &LockFile) -> BTreeMap<String, EntryState> {
     let mut states: BTreeMap<String, EntryState> = lock
         .skills
         .iter()
@@ -91,14 +181,192 @@ pub(super) fn status(scope: &Scope) -> Result<(Envelope, Vec<String>)> {
             }
         }
     }
+    states
+}
+
+fn upstream_states(lock: &LockFile, offline: bool) -> BTreeMap<String, UpstreamState> {
+    let mut states = BTreeMap::new();
+    let mut groups: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
     for (name, entry) in &lock.skills {
-        let state = states.get(name).expect("known status entry");
-        let mut record = skill_json(name, entry, Some(state));
-        record["update_status"] = json!("unknown");
-        envelope.skills.push(record);
-        lines.push(format!("{name}: {} (update status unknown)", state.state));
+        if entry.mode == Mode::Local {
+            states.insert(
+                name.clone(),
+                UpstreamState {
+                    status: "not_applicable",
+                    commit: None,
+                    content_changed: None,
+                    details: Vec::new(),
+                },
+            );
+        } else if offline {
+            states.insert(
+                name.clone(),
+                UpstreamState {
+                    status: "not_checked",
+                    commit: None,
+                    content_changed: None,
+                    details: Vec::new(),
+                },
+            );
+        } else {
+            let source = entry.source.as_ref().expect("validated vendored source");
+            groups
+                .entry((source.repository.clone(), source.reference.clone()))
+                .or_default()
+                .push(name.clone());
+        }
     }
-    Ok((envelope, lines))
+
+    for ((repository, reference), names) in groups {
+        match acquire_repository(&repository, Some(&reference)) {
+            Ok(acquired) => {
+                for name in names {
+                    let entry = lock.skills.get(&name).expect("grouped lock entry");
+                    let source = entry.source.as_ref().expect("vendored source");
+                    let resolved = entry.resolved.as_ref().expect("vendored pin");
+                    let result = source
+                        .selector()
+                        .and_then(|selector| acquired.select(&selector));
+                    let state = match result {
+                        Ok(snapshot) => {
+                            let content_changed = snapshot.digest != resolved.digest;
+                            let status = if content_changed {
+                                "update_available"
+                            } else if snapshot.commit != resolved.commit {
+                                "source_advanced"
+                            } else {
+                                "current"
+                            };
+                            UpstreamState {
+                                status,
+                                commit: Some(snapshot.commit),
+                                content_changed: Some(content_changed),
+                                details: Vec::new(),
+                            }
+                        }
+                        Err(error) => UpstreamState {
+                            status: "invalid",
+                            commit: Some(acquired.commit.clone()),
+                            content_changed: None,
+                            details: vec![format!("{error:#}")],
+                        },
+                    };
+                    states.insert(name, state);
+                }
+            }
+            Err(error) => {
+                let detail = format!("{error:#}");
+                for name in names {
+                    states.insert(
+                        name,
+                        UpstreamState {
+                            status: "unreachable",
+                            commit: None,
+                            content_changed: None,
+                            details: vec![detail.clone()],
+                        },
+                    );
+                }
+            }
+        }
+    }
+    states
+}
+
+fn recommended_action(name: &str, local: &str, upstream: &str) -> String {
+    if local == "local" {
+        return "project-owned; manage locally".to_owned();
+    }
+    let upstream_action = || match upstream {
+        "update_available" => Some(format!("skillctl update {name}")),
+        "source_advanced" => Some(format!("skillctl update {name} (pin only)")),
+        "unreachable" => Some("retry; verify repository/ref access".to_owned()),
+        "invalid" => Some("fix upstream selected skill".to_owned()),
+        "not_checked" => Some("run skillctl status online".to_owned()),
+        _ => None,
+    };
+    match (local, upstream) {
+        ("missing", "update_available" | "source_advanced") => format!("skillctl update {name}"),
+        ("modified", "update_available" | "source_advanced") => {
+            format!("review: skillctl diff {name}; then skillctl update {name} --force")
+        }
+        ("invalid", "update_available" | "source_advanced") => {
+            format!("review, then skillctl update {name} --force")
+        }
+        ("missing", "unreachable") => {
+            format!("verify repository/ref access; then skillctl sync {name}")
+        }
+        ("modified", "unreachable") => {
+            format!("review: skillctl diff {name}; verify repository/ref access")
+        }
+        ("invalid", "unreachable") => {
+            format!("verify repository/ref access; review, then skillctl sync {name} --force")
+        }
+        ("missing", "invalid") => format!("fix upstream selected skill; then skillctl sync {name}"),
+        ("modified", "invalid") => {
+            format!("review: skillctl diff {name}; fix upstream selected skill")
+        }
+        ("invalid", "invalid") => "fix local and upstream skill structure".to_owned(),
+        ("missing", _) => format!("skillctl sync {name}"),
+        ("modified", _) => format!("review: skillctl diff {name}"),
+        ("invalid", _) => format!("review, then skillctl sync {name} --force"),
+        _ => upstream_action().unwrap_or_else(|| "none".to_owned()),
+    }
+}
+
+fn abbreviated_commit(commit: &str) -> String {
+    commit.chars().take(12).collect()
+}
+
+fn render_status_table(rows: &[StatusRow]) -> Vec<String> {
+    if rows.is_empty() {
+        return vec!["No lock entries.".to_owned()];
+    }
+    let headers = ["NAME", "LOCAL", "UPSTREAM", "PIN", "REF", "ACTION"];
+    let mut widths = headers.map(str::len);
+    for row in rows {
+        for (index, value) in [
+            row.name.as_str(),
+            row.local.as_str(),
+            row.upstream.as_str(),
+            row.pin.as_str(),
+            row.reference.as_str(),
+            row.action.as_str(),
+        ]
+        .iter()
+        .enumerate()
+        {
+            widths[index] = widths[index].max(value.len());
+        }
+    }
+    let format_row = |values: [&str; 6]| {
+        format!(
+            "{:<name_width$}  {:<local_width$}  {:<upstream_width$}  {:<pin_width$}  {:<ref_width$}  {}",
+            values[0],
+            values[1],
+            values[2],
+            values[3],
+            values[4],
+            values[5],
+            name_width = widths[0],
+            local_width = widths[1],
+            upstream_width = widths[2],
+            pin_width = widths[3],
+            ref_width = widths[4],
+        )
+    };
+    let mut lines = vec![format_row(headers)];
+    lines.extend(rows.iter().map(|row| {
+        format_row([
+            &row.name,
+            &row.local,
+            &row.upstream,
+            &row.pin,
+            &row.reference,
+            &row.action,
+        ])
+    }));
+    lines
 }
 
 pub(super) fn list(scope: &Scope) -> Result<(Envelope, Vec<String>)> {
