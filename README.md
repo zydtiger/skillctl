@@ -21,7 +21,10 @@ mkdir -p ~/.agents/skills/skillctl-skill
 cp SKILL.md ~/.agents/skills/skillctl-skill/SKILL.md
 ```
 
-The installed directory is `skillctl-skill`, while the `SKILL.md` declared name remains `skillctl`. Copy `SKILL.md` again after updating this repository. Copying it does not install or update the CLI binary; reinstall an updated binary with `cargo install --path . --force`.
+The installed directory and the `SKILL.md` declared name are both
+`skillctl-skill`. Copy `SKILL.md` again after updating this repository. Copying
+it does not install or update the CLI binary; reinstall an updated binary with
+`cargo install --path . --force`.
 
 ## Layout and lock schema
 

@@ -83,6 +83,8 @@ Keep changes focused and pair behavior changes with tests. Separate schema/contr
 
 ## Skill distribution and compatibility
 
-Root `SKILL.md` is authoritative and installs as `~/.agents/skills/skillctl-skill/SKILL.md`. Copying it does not install the binary.
+Root `SKILL.md` is authoritative, declares `skillctl-skill`, and installs as
+`~/.agents/skills/skillctl-skill/SKILL.md`. Copying it does not install the
+binary.
 
 Version the lock schema. Continue reading version 1 directory-source locks. New locks use version 2, which accepts exactly one of `source.path` or `source.file`; file selectors must target a repository-relative `SKILL.md`. Every supported version must fail clearly on unknown fields so misspellings cannot weaken guarantees. Preserve deterministic source resolution, tree hashing, ordering, and output. Treat stable JSON output as an API: additive changes require care and breaking changes require an explicit compatibility decision.
