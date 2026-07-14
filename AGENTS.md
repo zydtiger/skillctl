@@ -19,16 +19,16 @@ Documentation and tests are part of each contract, not follow-up cleanup.
 
 ## Source organization
 
-- `src/cli.rs`: Clap parsing, flag compatibility, command dispatch, and orchestration.
+- `src/cli/`: Clap arguments, flag compatibility, top-level dispatch, focused command handlers, and shared command mutation support.
 - `src/error.rs`: structured command failures that preserve machine-readable error results.
 - `src/scope.rs`: project upward discovery, explicit init root, isolated global resolution, and paths.
-- `src/lockfile.rs`: strict versioned YAML schema, path-versus-file selectors, conditional validation, names, collisions, and safe relative paths.
-- `src/source.rs`: system-Git acquisition, revision/default-branch resolution, directory or single-file snapshot export, tree and `SKILL.md` validation. Never execute acquired content.
+- `src/lockfile/`: strict versioned YAML schema and separate validation for selectors, names, collisions, revisions, digests, and safe relative paths.
+- `src/source/`: system-Git acquisition, revision/default-branch resolution, directory or single-file snapshot export, and isolated `SKILL.md` validation. Never execute acquired content.
 - `src/digest.rs`: deterministic, framed, sorted source-tree hashing and comparisons.
-- `src/install.rs`: marker handling, entry state, read-only operations, staging, and mutation policy.
+- `src/install/`: managed-marker handling, installed state, tree comparison/copying, scope validation, and mutation policy.
 - `src/transaction.rs`: atomic lock writes, destination replacement, backup, rollback, and cleanup.
 - `src/output.rs`: human rendering and the stable single-document JSON API.
-- `tests/`: CLI-level integration coverage with temporary Git repositories, projects, and homes; no network or user-global state.
+- `tests/`: focused CLI integration suites with shared fixtures for temporary Git repositories, projects, and homes; no network or user-global state.
 
 Keep responsibilities narrow and files reasonably sized. Prefer explicit data passed between layers over hidden process state.
 
