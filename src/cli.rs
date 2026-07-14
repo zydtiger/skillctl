@@ -3,7 +3,9 @@ use crate::install::{
     compare_trees, copy_snapshot, entry_state, marker_for, read_marker, skill_json,
     validate_declared_names, validate_destination_location, validate_scope_layout, write_marker,
 };
-use crate::lockfile::{validate_identifier, LockFile, Mode, Resolved, SkillEntry, SourceSpec};
+use crate::lockfile::{
+    validate_identifier, LockFile, Mode, Resolved, SkillEntry, SourceSelector, SourceSpec,
+};
 use crate::output::{emit_json, Envelope};
 use crate::scope::Scope;
 use crate::source::{acquire, validate_skill_tree, Snapshot};
@@ -40,15 +42,26 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Initialize an empty version-1 lock in the current or global scope
+    /// Initialize an empty version-2 lock in the current or global scope
     Init,
     /// Add and vendor a skill from a Git repository
     Add {
         repository: String,
-        #[arg(long)]
-        path: String,
+        /// Repository-relative skill directory; use . for the repository root
+        #[arg(long, conflicts_with = "file", required_unless_present = "file")]
+        path: Option<String>,
+        /// Repository-relative SKILL.md to install without surrounding files
+        #[arg(
+            long,
+            conflicts_with = "path",
+            required_unless_present = "path",
+            requires = "name"
+        )]
+        file: Option<String>,
+        /// Lock entry and destination folder name; required with --file
         #[arg(long)]
         name: Option<String>,
+        /// Branch, tag, or revision followed by update
         #[arg(long = "ref")]
         reference: Option<String>,
     },
@@ -164,16 +177,24 @@ fn execute(cli: &Cli, scope: &Scope) -> Result<(Envelope, Vec<String>)> {
         Command::Add {
             repository,
             path,
+            file,
             name,
             reference,
-        } => add(
-            scope,
-            repository,
-            path,
-            name.as_deref(),
-            reference.as_deref(),
-            cli.dry_run,
-        ),
+        } => {
+            let selector = match (path, file) {
+                (Some(path), None) => SourceSelector::Directory(path.clone()),
+                (None, Some(file)) => SourceSelector::File(file.clone()),
+                _ => bail!("add requires exactly one of --path or --file"),
+            };
+            add(
+                scope,
+                repository,
+                &selector,
+                name.as_deref(),
+                reference.as_deref(),
+                cli.dry_run,
+            )
+        }
         Command::Sync { name } => sync(scope, name.as_deref(), cli.force, cli.dry_run),
         Command::Check { name } => check(scope, name.as_deref()),
         Command::Status => status(scope),
@@ -197,6 +218,7 @@ fn init(scope: &Scope, dry_run: bool) -> Result<(Envelope, Vec<String>)> {
     envelope.changes.push(json!({
         "action": "initialize",
         "path": scope.lock_file,
+        "version": lock.version,
         "dry_run": dry_run,
     }));
     if !dry_run {
@@ -224,15 +246,19 @@ fn init(scope: &Scope, dry_run: bool) -> Result<(Envelope, Vec<String>)> {
 fn add(
     scope: &Scope,
     repository: &str,
-    source_path: &str,
+    selector: &SourceSelector,
     requested_name: Option<&str>,
     reference: Option<&str>,
     dry_run: bool,
 ) -> Result<(Envelope, Vec<String>)> {
     let mut lock = load_lock(scope)?;
     validate_declared_names(scope, &lock)?;
+    if matches!(selector, SourceSelector::File(_)) && requested_name.is_none() {
+        bail!("--name is required with --file");
+    }
+    let upgrades_lock = matches!(selector, SourceSelector::File(_)) && lock.version == 1;
     let repository = normalize_repository(repository)?;
-    let snapshot = acquire(&repository, source_path, reference)?;
+    let snapshot = acquire(&repository, selector, reference)?;
     let name = requested_name.unwrap_or(&snapshot.metadata.name);
     validate_identifier(name).context("invalid --name")?;
     if lock.skills.contains_key(name) {
@@ -265,7 +291,14 @@ fn add(
         mode: Mode::Vendored,
         source: Some(SourceSpec {
             repository: repository.clone(),
-            path: source_path.to_owned(),
+            path: match selector {
+                SourceSelector::Directory(path) => Some(path.clone()),
+                SourceSelector::File(_) => None,
+            },
+            file: match selector {
+                SourceSelector::Directory(_) => None,
+                SourceSelector::File(file) => Some(file.clone()),
+            },
             reference: snapshot.reference.clone(),
         }),
         resolved: Some(Resolved {
@@ -274,6 +307,9 @@ fn add(
         }),
         destination: name.to_owned(),
     };
+    if upgrades_lock {
+        lock.version = 2;
+    }
     lock.skills.insert(name.to_owned(), entry.clone());
     lock.validate()?;
     let mut envelope = Envelope::new(scope);
@@ -282,8 +318,16 @@ fn add(
         "action": "add",
         "name": name,
         "destination": entry.destination,
+        "source_kind": match selector {
+            SourceSelector::Directory(_) => "path",
+            SourceSelector::File(_) => "file",
+        },
+        "source": match selector {
+            SourceSelector::Directory(path) | SourceSelector::File(path) => path,
+        },
         "commit": snapshot.commit,
         "digest": snapshot.digest,
+        "lock_version": lock.version,
         "dry_run": dry_run,
     }));
     if !dry_run {
@@ -292,10 +336,15 @@ fn add(
     Ok((
         envelope,
         vec![format!(
-            "{} `{name}` at {} ({})",
+            "{} `{name}` at {} ({}){}",
             if dry_run { "would add" } else { "added" },
             snapshot.commit,
-            snapshot.digest
+            snapshot.digest,
+            if upgrades_lock {
+                " and upgrade lock schema from v1 to v2"
+            } else {
+                ""
+            }
         )],
     ))
 }
@@ -333,7 +382,11 @@ fn sync(
         }
         let source = entry.source.as_ref().expect("validated lock");
         let resolved = entry.resolved.as_ref().expect("validated lock");
-        let snapshot = acquire(&source.repository, &source.path, Some(&resolved.commit))?;
+        let snapshot = acquire(
+            &source.repository,
+            &source.selector()?,
+            Some(&resolved.commit),
+        )?;
         if snapshot.commit != resolved.commit || snapshot.digest != resolved.digest {
             bail!(
                 "pinned snapshot for `{name}` does not match lock: got {} {}, expected {} {}",
@@ -486,7 +539,11 @@ fn diff(scope: &Scope, selected: Option<&str>) -> Result<(Envelope, Vec<String>)
         }
         let source = entry.source.as_ref().expect("validated lock");
         let resolved = entry.resolved.as_ref().expect("validated lock");
-        let snapshot = acquire(&source.repository, &source.path, Some(&resolved.commit))?;
+        let snapshot = acquire(
+            &source.repository,
+            &source.selector()?,
+            Some(&resolved.commit),
+        )?;
         if snapshot.digest != resolved.digest {
             bail!("pinned source digest for `{name}` no longer matches the lock");
         }
@@ -528,7 +585,11 @@ fn update(
             continue;
         }
         let source = old.source.as_ref().expect("validated lock");
-        let snapshot = acquire(&source.repository, &source.path, Some(&source.reference))?;
+        let snapshot = acquire(
+            &source.repository,
+            &source.selector()?,
+            Some(&source.reference),
+        )?;
         let resolved = old.resolved.as_ref().expect("validated lock");
         if snapshot.commit == resolved.commit && snapshot.digest == resolved.digest {
             lines.push(format!("{name}: already up to date at {}", resolved.commit));
@@ -628,7 +689,16 @@ fn list(scope: &Scope) -> Result<(Envelope, Vec<String>)> {
         let source = entry
             .source
             .as_ref()
-            .map(|source| format!("{}:{}@{}", source.repository, source.path, source.reference))
+            .map(|source| {
+                let selector = source
+                    .selector()
+                    .map(|selector| match selector {
+                        SourceSelector::Directory(path) => format!("path={path}"),
+                        SourceSelector::File(file) => format!("file={file}"),
+                    })
+                    .unwrap_or_else(|_| "invalid-selector".to_owned());
+                format!("{}:{selector}@{}", source.repository, source.reference)
+            })
             .unwrap_or_else(|| "-".to_owned());
         let commit = entry
             .resolved

@@ -22,8 +22,8 @@ Documentation and tests are part of each contract, not follow-up cleanup.
 - `src/cli.rs`: Clap parsing, flag compatibility, command dispatch, and orchestration.
 - `src/error.rs`: structured command failures that preserve machine-readable error results.
 - `src/scope.rs`: project upward discovery, explicit init root, isolated global resolution, and paths.
-- `src/lockfile.rs`: strict versioned YAML schema, conditional validation, names, collisions, and safe relative paths.
-- `src/source.rs`: system-Git acquisition, revision/default-branch resolution, snapshot export, tree and `SKILL.md` validation. Never execute acquired content.
+- `src/lockfile.rs`: strict versioned YAML schema, path-versus-file selectors, conditional validation, names, collisions, and safe relative paths.
+- `src/source.rs`: system-Git acquisition, revision/default-branch resolution, directory or single-file snapshot export, tree and `SKILL.md` validation. Never execute acquired content.
 - `src/digest.rs`: deterministic, framed, sorted source-tree hashing and comparisons.
 - `src/install.rs`: marker handling, entry state, read-only operations, staging, and mutation policy.
 - `src/transaction.rs`: atomic lock writes, destination replacement, backup, rollback, and cleanup.
@@ -35,7 +35,7 @@ Keep responsibilities narrow and files reasonably sized. Prefer explicit data pa
 ## Safety invariants
 
 - Never execute downloaded scripts, hooks, binaries, or other skill content.
-- Reject unsafe UTF-8 paths, absolute paths, empty or dot components, traversal, symlinks, and special files.
+- Reject unsafe UTF-8 paths, absolute destinations, empty components, traversal, symlinks, and special files. Permit `source.path: .` only as the explicit repository-root directory selector.
 - Never overwrite modified vendored content without an explicit supported `--force` operation after reporting differences.
 - Never mutate a `mode: local` skill directory.
 - Keep the lock and installed tree mutually consistent with atomic writes or tested rollback protection.
@@ -85,4 +85,4 @@ Keep changes focused and pair behavior changes with tests. Separate schema/contr
 
 Root `SKILL.md` is authoritative and installs as `~/.agents/skills/skillctl-skill/SKILL.md`. Copying it does not install the binary.
 
-Version the lock schema. Version 1 must fail clearly on unsupported versions and unknown fields so misspellings cannot weaken guarantees. Preserve deterministic source resolution, tree hashing, ordering, and output. Treat stable JSON output as an API: additive changes require care and breaking changes require an explicit compatibility decision.
+Version the lock schema. Continue reading version 1 directory-source locks. New locks use version 2, which accepts exactly one of `source.path` or `source.file`; file selectors must target a repository-relative `SKILL.md`. Every supported version must fail clearly on unknown fields so misspellings cannot weaken guarantees. Preserve deterministic source resolution, tree hashing, ordering, and output. Treat stable JSON output as an API: additive changes require care and breaking changes require an explicit compatibility decision.

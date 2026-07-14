@@ -34,7 +34,10 @@ pub struct SkillEntry {
 #[serde(deny_unknown_fields)]
 pub struct SourceSpec {
     pub repository: String,
-    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
     #[serde(rename = "ref")]
     pub reference: String,
 }
@@ -49,7 +52,7 @@ pub struct Resolved {
 impl LockFile {
     pub fn empty() -> Self {
         Self {
-            version: 1,
+            version: 2,
             skills: BTreeMap::new(),
         }
     }
@@ -64,9 +67,9 @@ impl LockFile {
     }
 
     pub fn validate(&self) -> Result<()> {
-        if self.version != 1 {
+        if !matches!(self.version, 1 | 2) {
             bail!(
-                "unsupported lock schema version {}; supported: 1",
+                "unsupported lock schema version {}; supported: 1 and 2",
                 self.version
             );
         }
@@ -100,8 +103,25 @@ impl LockFile {
                         .with_context(|| format!("invalid source repository for `{name}`"))?;
                     validate_git_reference(&source.reference)
                         .with_context(|| format!("invalid source ref for `{name}`"))?;
-                    safe_source_path(&source.path)
-                        .with_context(|| format!("invalid source path for `{name}`"))?;
+                    match (source.path.as_deref(), source.file.as_deref()) {
+                        (Some(path), None) => {
+                            safe_source_path(path)
+                                .with_context(|| format!("invalid source path for `{name}`"))?;
+                        }
+                        (None, Some(file)) if self.version == 2 => {
+                            safe_source_file(file)
+                                .with_context(|| format!("invalid source file for `{name}`"))?;
+                        }
+                        (None, Some(_)) => {
+                            bail!("source.file for `{name}` requires lock schema version 2");
+                        }
+                        (Some(_), Some(_)) => {
+                            bail!("vendored entry `{name}` must contain only one of source.path or source.file");
+                        }
+                        (None, None) => {
+                            bail!("vendored entry `{name}` requires source.path or source.file");
+                        }
+                    }
                     validate_commit(&resolved.commit)
                         .with_context(|| format!("invalid resolved commit for `{name}`"))?;
                     validate_digest(&resolved.digest)
@@ -135,12 +155,37 @@ impl LockFile {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SourceSelector {
+    Directory(String),
+    File(String),
+}
+
+impl SourceSpec {
+    pub fn selector(&self) -> Result<SourceSelector> {
+        match (&self.path, &self.file) {
+            (Some(path), None) => Ok(SourceSelector::Directory(path.clone())),
+            (None, Some(file)) => Ok(SourceSelector::File(file.clone())),
+            (Some(_), Some(_)) => bail!("source contains both path and file"),
+            (None, None) => bail!("source contains neither path nor file"),
+        }
+    }
+}
+
 pub fn safe_source_path(value: &str) -> Result<PathBuf> {
     if value == "." {
         Ok(PathBuf::new())
     } else {
         safe_relative_path(value)
     }
+}
+
+pub fn safe_source_file(value: &str) -> Result<PathBuf> {
+    let path = safe_relative_path(value)?;
+    if path.file_name().and_then(|name| name.to_str()) != Some("SKILL.md") {
+        bail!("source file must be named SKILL.md");
+    }
+    Ok(path)
 }
 
 pub fn safe_relative_path(value: &str) -> Result<PathBuf> {

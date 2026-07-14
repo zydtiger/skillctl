@@ -35,8 +35,10 @@ project/
       issue-delivery/
 ```
 
+New locks use schema version 2. Version 1 directory-source locks remain readable; file sources require version 2. Adding a file source to a valid v1 lock upgrades that lock to v2 while preserving its existing directory entries and installed markers.
+
 ```yaml
-version: 1
+version: 2
 skills:
   issue-delivery:
     mode: vendored
@@ -48,12 +50,22 @@ skills:
       commit: 0123456789abcdef0123456789abcdef01234567
       digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     destination: issue-delivery
+  skillctl-skill:
+    mode: vendored
+    source:
+      repository: https://github.com/example/skillctl.git
+      file: SKILL.md
+      ref: main
+    resolved:
+      commit: 0123456789abcdef0123456789abcdef01234567
+      digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    destination: skillctl-skill
   project-owned-skill:
     mode: local
     destination: project-owned-skill
 ```
 
-Schema v1 rejects unknown fields, unsupported versions, unsafe destinations, invalid conditional fields, duplicate destinations, and duplicate declared skill names. Vendored directories contain `.skillctl-managed`; it is metadata and is excluded from source digests.
+Schemas v1 and v2 reject unknown fields, unsupported versions, unsafe destinations, invalid conditional fields, duplicate destinations, and duplicate declared skill names. A v1 vendored source requires `path`; a v2 source requires exactly one of `path` or `file`. A `file` value must be a safe repository-relative path ending in `SKILL.md`. Vendored directories contain `.skillctl-managed`; it is metadata and is excluded from source digests.
 
 Mutations validate content in isolated staging directories before replacement. Destination and lock changes use backups and rollback protection, and changed managed content is never replaced unless `sync` or `update` explicitly receives `--force`.
 
@@ -64,6 +76,7 @@ Project-vendored skill folders and `.agents/skills.lock.yaml` should normally be
 ```text
 skillctl init
 skillctl add <repository> --path <source-path> [--name NAME] [--ref REF]
+skillctl add <repository> --file <path-to-SKILL.md> --name NAME [--ref REF]
 skillctl sync [NAME]
 skillctl check [NAME]
 skillctl status
@@ -75,7 +88,18 @@ skillctl list
 
 Use `-g` or `--global` for global scope. `--json` emits one stable JSON document on stdout. `--dry-run` is accepted only for mutating commands and previews changes without writes. `--force` is accepted only by replacement operations (`sync` and `update`) and is required before overwriting changed managed content. Misleading flag/command combinations are errors.
 
-`add` clones a Git URL or local Git repository, discovers its default branch when `--ref` is omitted, validates the selected skill, and pins the resolved commit and digest. Use `--path .` for a skill at a repository root; local repository paths are stored as absolute paths so later commands work from nested project directories. `sync` reproduces the exact locked commit without advancing it. `update` follows `source.ref`; use it only after changing the authoritative repository. `check` and `status` are network-free. `diff` compares installed files with the pinned source and reports deterministic added, removed, modified, and type-changed path records describing the installed tree relative to the pin; it may acquire the repository in an isolated temporary checkout. `remove` deletes only verified managed vendored content; a local entry is removed from the lock while its files remain.
+`add` clones a Git URL or local Git repository, discovers its default branch when `--ref` is omitted, validates the selected skill, and pins the resolved commit and digest. Use `--path DIRECTORY` to vendor a complete skill tree, including its resources. Use `--file PATH/TO/SKILL.md --name DESTINATION` to install only that file as the destination's root `SKILL.md`; `--name` is required because it defines the containing folder. `--path` and `--file` are mutually exclusive. Local repository paths are stored as absolute paths so later commands work from nested project directories.
+
+`sync` reproduces the exact locked commit without advancing it. `update` follows `source.ref`; use it only after changing the authoritative repository. `check` and `status` are network-free. `diff` compares installed files with the pinned source and reports deterministic added, removed, modified, and type-changed path records describing the installed tree relative to the pin; it may acquire the repository in an isolated temporary checkout. `remove` deletes only verified managed vendored content; a local entry is removed from the lock while its files remain.
+
+For example, install only this repository's root skill without vendoring its Rust sources:
+
+```sh
+skillctl add https://github.com/zydtiger/skillctl.git \
+  --file SKILL.md \
+  --name skillctl-skill \
+  --ref main
+```
 
 Safe workflow:
 
@@ -109,6 +133,6 @@ python3 /Users/zyd/.codex/skills/.system/skill-creator/scripts/quick_validate.py
 
 Tests use temporary local Git repositories and isolated homes; they require neither a network connection nor the planned `agent-workflows` repository.
 
-## Version 1 limitations
+## Version 2 limitations
 
-Version 1 has no hosted registry, dependency solver, hooks, symlinks, automatic commits/publication, permission-based immutability, or binary self-update. Diff output is path-oriented rather than a line-level unified patch. Git authentication and transport are delegated to the system `git` executable.
+Version 2 has no hosted registry, dependency solver, hooks, symlinks, automatic commits/publication, permission-based immutability, or binary self-update. Diff output is path-oriented rather than a line-level unified patch. Git authentication and transport are delegated to the system `git` executable.

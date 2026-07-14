@@ -1,5 +1,5 @@
 use crate::digest::{digest_tree, inspect_tree, EntryKind, TreeRecord, MARKER_FILE};
-use crate::lockfile::{LockFile, Mode, SkillEntry};
+use crate::lockfile::{safe_source_file, LockFile, Mode, SkillEntry, SourceSelector};
 use crate::scope::Scope;
 use crate::source::{validate_skill_tree, SkillMetadata};
 use anyhow::{bail, Context, Result};
@@ -17,6 +17,8 @@ pub struct Marker {
     pub scope: String,
     pub lock: String,
     pub repository: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
     pub commit: String,
 }
 
@@ -42,12 +44,18 @@ pub fn marker_for(scope: &Scope, name: &str, entry: &SkillEntry) -> Result<Marke
         .resolved
         .as_ref()
         .context("vendored entry has no resolved data")?;
+    let selector = source.selector()?;
+    let file = match selector {
+        SourceSelector::Directory(_) => None,
+        SourceSelector::File(file) => Some(file),
+    };
     Ok(Marker {
-        version: 1,
+        version: if file.is_some() { 2 } else { 1 },
         entry: name.to_owned(),
         scope: scope.label().to_owned(),
         lock: ".agents/skills.lock.yaml".to_owned(),
         repository: source.repository.clone(),
+        file,
         commit: resolved.commit.clone(),
     })
 }
@@ -67,8 +75,14 @@ pub fn read_marker(root: &Path) -> Result<Marker> {
         fs::read(&path).with_context(|| format!("missing managed marker {}", path.display()))?;
     let marker: Marker = serde_yaml_ng::from_slice(&bytes)
         .with_context(|| format!("invalid managed marker {}", path.display()))?;
-    if marker.version != 1 {
-        bail!("unsupported managed marker version {}", marker.version);
+    match (marker.version, marker.file.as_deref()) {
+        (1, None) => {}
+        (2, Some(file)) => {
+            safe_source_file(file).context("invalid managed marker source file")?;
+        }
+        (1, Some(_)) => bail!("managed marker version 1 must not contain file"),
+        (2, None) => bail!("managed marker version 2 requires file"),
+        (version, _) => bail!("unsupported managed marker version {version}"),
     }
     Ok(marker)
 }
@@ -292,6 +306,7 @@ pub fn skill_json(name: &str, entry: &SkillEntry, state: Option<&EntryState>) ->
         "source": source.map(|source| json!({
             "repository": source.repository,
             "path": source.path,
+            "file": source.file,
             "ref": source.reference,
         })),
         "commit": resolved.map(|resolved| resolved.commit.clone()),

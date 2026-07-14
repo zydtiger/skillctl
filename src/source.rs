@@ -1,7 +1,7 @@
 use crate::digest::digest_tree;
 use crate::lockfile::{
-    safe_relative_path, safe_source_path, validate_git_reference, validate_identifier,
-    validate_repository,
+    safe_relative_path, safe_source_file, safe_source_path, validate_git_reference,
+    validate_identifier, validate_repository, SourceSelector,
 };
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
@@ -28,9 +28,20 @@ pub struct SkillMetadata {
     pub description: String,
 }
 
-pub fn acquire(repository: &str, source_path: &str, reference: Option<&str>) -> Result<Snapshot> {
+pub fn acquire(
+    repository: &str,
+    selector: &SourceSelector,
+    reference: Option<&str>,
+) -> Result<Snapshot> {
     validate_repository(repository)?;
-    let source_path = safe_source_path(source_path)?;
+    match selector {
+        SourceSelector::Directory(path) => {
+            safe_source_path(path)?;
+        }
+        SourceSelector::File(file) => {
+            safe_source_file(file)?;
+        }
+    }
     let temp = tempfile::tempdir().context("could not create source staging directory")?;
     let bare = temp.path().join("repository.git");
     run_git(
@@ -69,7 +80,16 @@ pub fn acquire(repository: &str, source_path: &str, reference: Option<&str>) -> 
     let commit = resolve_revision(&bare, &followed)?;
     let root = temp.path().join("snapshot");
     fs::create_dir(&root)?;
-    export_tree(&bare, &commit, &source_path, &root)?;
+    match selector {
+        SourceSelector::Directory(path) => {
+            let path = safe_source_path(path)?;
+            export_tree(&bare, &commit, &path, &root)?;
+        }
+        SourceSelector::File(file) => {
+            let file = safe_source_file(file)?;
+            export_file(&bare, &commit, &file, &root)?;
+        }
+    }
     if root.join(crate::digest::MARKER_FILE).exists() {
         bail!(
             "source tree must not contain reserved file {}",
@@ -86,6 +106,43 @@ pub fn acquire(repository: &str, source_path: &str, reference: Option<&str>) -> 
         digest,
         metadata,
     })
+}
+
+fn export_file(bare: &Path, commit: &str, source_file: &Path, destination: &Path) -> Result<()> {
+    let source = source_file
+        .to_str()
+        .context("source file is not valid UTF-8")?;
+    let output = git_output(
+        Command::new("git")
+            .arg("-C")
+            .arg(bare)
+            .args(["ls-tree", "-z"])
+            .arg(commit)
+            .arg("--")
+            .arg(source),
+        "locate source file",
+    )?;
+    let records: Vec<&[u8]> = output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty())
+        .collect();
+    if records.len() != 1 {
+        bail!("source file `{source}` is missing at commit {commit}");
+    }
+    let (mode, kind, object, full_path) = parse_tree_record(records[0])?;
+    if full_path != source {
+        bail!("Git returned unexpected source file `{full_path}` for `{source}`");
+    }
+    if kind != "blob" || (mode != "100644" && mode != "100755") {
+        bail!("source file `{source}` is not an ordinary file");
+    }
+    write_blob(
+        bare,
+        object,
+        &destination.join("SKILL.md"),
+        mode == "100755",
+    )
 }
 
 pub fn validate_skill_tree(root: &Path) -> Result<SkillMetadata> {
@@ -184,13 +241,7 @@ fn export_tree(bare: &Path, commit: &str, source_path: &Path, destination: &Path
         .split(|byte| *byte == 0)
         .filter(|part| !part.is_empty())
     {
-        let tab = raw
-            .iter()
-            .position(|byte| *byte == b'\t')
-            .context("malformed git tree record")?;
-        let header = std::str::from_utf8(&raw[..tab]).context("malformed git tree header")?;
-        let full_path =
-            std::str::from_utf8(&raw[tab + 1..]).context("Git path is not valid UTF-8")?;
+        let (mode, kind, object, full_path) = parse_tree_record(raw)?;
         let relative = if let Some(prefix) = &prefix {
             full_path
                 .strip_prefix(prefix)
@@ -199,27 +250,11 @@ fn export_tree(bare: &Path, commit: &str, source_path: &Path, destination: &Path
             full_path
         };
         let relative = safe_relative_path(relative)?;
-        let mut fields = header.split_whitespace();
-        let mode = fields.next().context("Git tree record is missing mode")?;
-        let kind = fields.next().context("Git tree record is missing type")?;
-        let object = fields.next().context("Git tree record is missing object")?;
         if kind != "blob" || (mode != "100644" && mode != "100755") {
             bail!("source tree contains unsupported {kind} with mode {mode}: {full_path}");
         }
         let target = destination.join(&relative);
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let blob = git_output(
-            Command::new("git")
-                .arg("-C")
-                .arg(bare)
-                .args(["cat-file", "blob", object]),
-            "read source blob",
-        )?;
-        let mut file = fs::File::create(&target)?;
-        file.write_all(&blob.stdout)?;
-        set_executable(&target, mode == "100755")?;
+        write_blob(bare, object, &target, mode == "100755")?;
         count += 1;
     }
     if count == 0 {
@@ -227,6 +262,36 @@ fn export_tree(bare: &Path, commit: &str, source_path: &Path, destination: &Path
         bail!("source path `{display}` is missing or contains no files at commit {commit}");
     }
     Ok(())
+}
+
+fn parse_tree_record(raw: &[u8]) -> Result<(&str, &str, &str, &str)> {
+    let tab = raw
+        .iter()
+        .position(|byte| *byte == b'\t')
+        .context("malformed git tree record")?;
+    let header = std::str::from_utf8(&raw[..tab]).context("malformed git tree header")?;
+    let full_path = std::str::from_utf8(&raw[tab + 1..]).context("Git path is not valid UTF-8")?;
+    let mut fields = header.split_whitespace();
+    let mode = fields.next().context("Git tree record is missing mode")?;
+    let kind = fields.next().context("Git tree record is missing type")?;
+    let object = fields.next().context("Git tree record is missing object")?;
+    Ok((mode, kind, object, full_path))
+}
+
+fn write_blob(bare: &Path, object: &str, target: &Path, executable: bool) -> Result<()> {
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let blob = git_output(
+        Command::new("git")
+            .arg("-C")
+            .arg(bare)
+            .args(["cat-file", "blob", object]),
+        "read source blob",
+    )?;
+    let mut file = fs::File::create(target)?;
+    file.write_all(&blob.stdout)?;
+    set_executable(target, executable)
 }
 
 fn git_output(command: &mut Command, operation: &str) -> Result<Output> {
