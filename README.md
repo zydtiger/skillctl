@@ -95,6 +95,18 @@ Use `-g` or `--global` for global scope. `--json` emits one stable JSON document
 
 `sync` reproduces the exact locked commit without advancing it. `update` follows `source.ref`; use it only after changing the authoritative repository. `diff` compares installed files with the pinned source and reports deterministic added, removed, modified, and type-changed path records describing the installed tree relative to the pin; it may acquire the repository in an isolated temporary checkout. `remove` deletes only verified managed vendored content; a local entry is removed from the lock while its files remain.
 
+`update` reports one of three outcomes per entry, matching the classification `status` reports upstream:
+
+| Outcome | Condition | Effect |
+| --- | --- | --- |
+| `no-op` | commit and digest both match, destination installed | nothing changes |
+| `pin-only` | digest matches, commit advanced, destination installed | records the new commit and refreshes the managed marker; the installed destination is not replaced |
+| `update` | digest differs, or the destination is missing | reinstalls the destination and records the new commit and digest |
+
+A `pin-only` outcome occurs when an unrelated commit advances a shared `source.ref` without changing the selected skill. Because nothing is replaced, it neither rewrites installed files nor requires `--force` for a locally modified destination; such a destination keeps its local changes and continues to report `modified`. Use `diff` and `sync --force` to reconcile it deliberately.
+
+Pin-only advances are written before any content update in the same run, so the lock and every refreshed marker stay consistent even when a later entry fails.
+
 `check` is the deterministic offline integrity gate. It validates the lock and schema, destination safety, installed skill structure, managed markers, declared-name conflicts, and vendored digests without acquiring any source. A clean run prints one concise `OK` summary; any integrity failure is actionable and exits nonzero. It never reports update availability.
 
 `status` is the lifecycle dashboard. By default it queries each unique repository/ref once, then compares every selected skill's upstream digest with its locked digest. Its `LOCAL` column reports `clean`, `modified`, `missing`, `invalid`, or project-owned `local` state. Its `UPSTREAM` column reports `current`, `update_available`, `source_advanced` when the ref moved but that selected skill did not change, `unreachable`, `invalid`, or `not_applicable` for local entries. An unreachable source does not discard local integrity results or make a successfully produced dashboard fail. Use `status --offline` to skip all source access; vendored entries then report `not_checked`, with one footer explaining the skipped upstream checks.

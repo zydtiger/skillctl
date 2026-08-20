@@ -56,6 +56,14 @@ impl Fixture {
         git(&self.repo, &["commit", "-qm", "advance"]);
         git_stdout(&self.repo, &["rev-parse", "HEAD"])
     }
+
+    /// Advance the source ref without changing any vendored skill's content.
+    pub(crate) fn advance_unrelated(&self, content: &str) -> String {
+        fs::write(self.repo.join("README.md"), content).unwrap();
+        git(&self.repo, &["add", "."]);
+        git(&self.repo, &["commit", "-qm", "advance unrelated"]);
+        git_stdout(&self.repo, &["rev-parse", "HEAD"])
+    }
 }
 
 pub(crate) fn binary() -> &'static str {
@@ -116,6 +124,23 @@ pub(crate) fn write_skill(directory: &Path, name: &str, data: &str) {
     )
     .unwrap();
     fs::write(directory.join("data.txt"), data).unwrap();
+}
+
+/// Content plus inode, so a byte-identical reinstall is still detected.
+#[cfg(unix)]
+pub(crate) fn file_identity(path: &Path) -> (String, u64) {
+    use std::os::unix::fs::MetadataExt;
+    let content = fs::read_to_string(path).unwrap();
+    (content, fs::metadata(path).unwrap().ino())
+}
+
+#[cfg(not(unix))]
+pub(crate) fn file_identity(path: &Path) -> (String, u64) {
+    (fs::read_to_string(path).unwrap(), 0)
+}
+
+pub(crate) fn read_lock(fixture: &Fixture) -> String {
+    fs::read_to_string(fixture.project.join(".agents/skills.lock.yaml")).unwrap()
 }
 
 pub(crate) fn json(output: &Output) -> Value {
