@@ -77,6 +77,25 @@ Use concise imperative Conventional Commit-style subjects when commits are reque
 
 Choose one primary prefix for each focused commit. Avoid vague subjects such as `update files` or `misc fixes`.
 
+## Versioning and releases
+
+`skillctl` is pre-1.0 and versioned with semantic versioning under the `0.x` convention. Three surfaces are public and govern the bump: the CLI (commands, flags, and exit behavior), the `--json` document, and the lock schema.
+
+- Bump the minor version for a breaking change to any public surface: a removed or renamed command or flag, a removed or repurposed JSON field, a changed exit-code meaning, or a lock schema change that an older `skillctl` cannot read.
+- Bump the patch version otherwise, including bug fixes, additive JSON fields or values, new optional flags, and new commands.
+- Adding a lock schema version is additive when older locks stay readable; removing support for one is breaking.
+
+Do not bump the version in the same pull request as the change it describes. Release from `main` after the change merges, so a release records what shipped rather than what is proposed.
+
+Release steps, each requiring its own approval:
+
+1. Verify `main` is synchronized and passes the validation gates below.
+2. Set `version` in `Cargo.toml`, regenerate `Cargo.lock` by building, and commit with `chore: release vX.Y.Z`.
+3. Tag that exact commit as `vX.Y.Z` and push the tag.
+4. Publish a GitHub Release for the tag. Its notes are the version history: state user-visible changes, grouped as added, changed, fixed, and breaking, and link the issues and pull requests. The repository keeps no changelog file.
+
+A release must be reachable from `main` and must never be retagged. Correct a mistaken release by publishing the next version.
+
 ## Work organization
 
 Keep changes focused and pair behavior changes with tests. Separate schema/contract decisions from mechanical cleanup when that improves review. When a forge is later configured, use issues and pull requests as reviewable units and check existing work before proposing duplicates. Do not assume GitHub or Gitea; inspect repository configuration first.

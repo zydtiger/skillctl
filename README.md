@@ -8,13 +8,27 @@ The lock mechanism is a `skillctl` convention, not an official built-in Codex lo
 
 ## Installation
 
-Run these commands from the `skillctl` project root. Install the binary separately:
+Install the binary directly from the repository without cloning it. Prefer a tag so the installed binary is a known release:
+
+```sh
+cargo install --git https://github.com/zydtiger/skillctl.git --tag v0.2.0
+```
+
+Omit `--tag` to track the default branch, which may contain unreleased changes:
+
+```sh
+cargo install --git https://github.com/zydtiger/skillctl.git
+```
+
+To build from a local checkout instead, run this from the project root:
 
 ```sh
 cargo install --path .
 ```
 
-Install the bundled agent skill under the required folder name:
+`cargo install` places the binary in `~/.cargo/bin`, which must be on `PATH`. Add `--force` to any of these commands to replace an already-installed binary.
+
+Install the bundled agent skill under the required folder name, from the project root:
 
 ```sh
 mkdir -p ~/.agents/skills/skillctl-skill
@@ -24,7 +38,7 @@ cp SKILL.md ~/.agents/skills/skillctl-skill/SKILL.md
 The installed directory and the `SKILL.md` declared name are both
 `skillctl-skill`. Copy `SKILL.md` again after updating this repository. Copying
 it does not install or update the CLI binary; reinstall an updated binary with
-`cargo install --path . --force`.
+one of the commands above.
 
 ## Layout and lock schema
 
@@ -140,6 +154,14 @@ Every JSON response uses a deterministic envelope with `ok`, `scope`, `lock_file
 Status skill records expose separate `local_status` and `upstream_status` fields plus `pinned_commit`, `upstream_commit`, `content_changed`, `upstream_details`, and `recommended_action`. `content_changed` is `true` or `false` after a successful vendored upstream comparison and `null` when it is not applicable or could not be checked. For compatibility, the earlier `state`, `commit`, and `digest` fields remain; `update_status` also remains as an alias of `upstream_status`, but no longer emits the ambiguous legacy value `unknown`. Consumers should migrate to the explicit fields. Status enum values use the underscore spellings shown above.
 
 Exit code 0 means command success and, for `check`, a clean integrity result. Nonzero covers invalid locks, integrity mismatches, unsafe inputs, source failures in commands that require acquisition, refused overwrites, and invalid flag use. `status` reports an unreachable upstream source in the dashboard while exiting 0 because the lifecycle inspection itself completed; lock/schema failures still exit nonzero.
+
+## Versioning
+
+`skillctl` is pre-1.0 and follows semantic versioning under the `0.x` convention. The CLI, the `--json` document, and the lock schema are the public surfaces.
+
+A breaking change to any of them bumps the minor version: a removed or renamed command or flag, a removed or repurposed JSON field, a changed exit-code meaning, or a lock schema change that an older `skillctl` cannot read. Everything else bumps the patch version, including fixes, additive JSON fields or values, new optional flags, and new commands.
+
+Releases are Git tags named `vX.Y.Z` with GitHub Release notes describing the user-visible changes. The repository keeps no changelog file. Install a specific release with `cargo install --git … --tag vX.Y.Z`.
 
 ## Development
 
