@@ -87,14 +87,19 @@ Choose one primary prefix for each focused commit. Avoid vague subjects such as 
 
 Do not bump the version in the same pull request as the change it describes. Release from `main` after the change merges, so a release records what shipped rather than what is proposed.
 
-Release steps, each requiring its own approval:
+Release steps:
 
 1. Verify `main` is synchronized and passes the validation gates below.
 2. Set `version` in `Cargo.toml`, regenerate `Cargo.lock` by building, and commit with `chore: release vX.Y.Z`.
 3. Tag that exact commit as `vX.Y.Z` and push the tag.
 4. Publish a GitHub Release for the tag. Its notes are the version history: state user-visible changes, grouped as added, changed, fixed, and breaking, and link the issues and pull requests. The repository keeps no changelog file.
+5. Verify the published tag, the release, and installation from the exact tag with `cargo install --git … --tag vX.Y.Z`.
+
+Every release is a separate approval, even inside an approved task. Approval to edit, commit, push, or merge is never release approval, and approval for one release never covers the next. Immediately before pushing a release tag, and again before creating, updating, or deleting a GitHub Release, present the exact version and the commit it will point at, with the rationale that justifies that number under the scheme above, and wait for explicit approval.
 
 A release must be reachable from `main` and must never be retagged. Correct a mistaken release by publishing the next version.
+
+A repository ruleset named `protect-release-tags` enforces this on the remote for `refs/tags/v*`, denying tag deletion, non-fast-forward updates, and updates, with no bypass. A rejected tag push is that rule working, not a broken remote.
 
 ## Work organization
 
