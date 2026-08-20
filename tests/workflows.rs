@@ -199,6 +199,171 @@ fn update_advances_branch_and_then_is_a_no_op() {
 }
 
 #[test]
+fn update_advances_pin_without_reinstalling_unchanged_content() {
+    let fixture = Fixture::new();
+    fixture.init_add();
+    let installed = fixture.project.join(".agents/skills/demo/data.txt");
+    let before = file_identity(&installed);
+    let commit = fixture.advance_unrelated("unrelated change");
+
+    let output = fixture
+        .command()
+        .args(["update", "--json"])
+        .output()
+        .unwrap();
+    assert_ok_ref(&output);
+    let change = json(&output)["changes"][0].clone();
+    assert_eq!(change["action"], "pin-only");
+    assert_eq!(change["name"], "demo");
+    assert_eq!(change["commit"], commit);
+    assert_eq!(change["dry_run"], false);
+
+    // The destination must not be replaced: content and inode both survive.
+    assert_eq!(file_identity(&installed), before);
+    // The advanced commit is recorded so the entry returns to `current`.
+    assert!(read_lock(&fixture).contains(&commit));
+
+    let output = fixture
+        .command()
+        .args(["check", "--json"])
+        .output()
+        .unwrap();
+    assert_ok_ref(&output);
+    let output = fixture
+        .command()
+        .args(["status", "--json"])
+        .output()
+        .unwrap();
+    assert_ok_ref(&output);
+    let skill = &json(&output)["skills"][0];
+    assert_eq!(skill["upstream_status"], "current");
+    assert_eq!(skill["local_status"], "clean");
+}
+
+#[test]
+fn update_separates_pin_only_entries_from_changed_content() {
+    let fixture = Fixture::new();
+    write_skill(&fixture.repo.join("skills/other"), "other", "one");
+    git(&fixture.repo, &["add", "."]);
+    git(&fixture.repo, &["commit", "-qm", "add other skill"]);
+    fixture.init_add();
+    assert_ok(
+        fixture
+            .command()
+            .args([
+                "add",
+                fixture.repo.to_str().unwrap(),
+                "--path",
+                "skills/other",
+            ])
+            .output()
+            .unwrap(),
+    );
+    let untouched = fixture.project.join(".agents/skills/demo/data.txt");
+    let before = file_identity(&untouched);
+
+    write_skill(&fixture.repo.join("skills/other"), "other", "two");
+    git(&fixture.repo, &["add", "."]);
+    git(&fixture.repo, &["commit", "-qm", "change other only"]);
+    let commit = git_stdout(&fixture.repo, &["rev-parse", "HEAD"]);
+
+    let output = fixture
+        .command()
+        .args(["update", "--json"])
+        .output()
+        .unwrap();
+    assert_ok_ref(&output);
+    let changes = json(&output)["changes"].as_array().unwrap().clone();
+    let actions: Vec<(String, String)> = changes
+        .iter()
+        .map(|change| {
+            (
+                change["name"].as_str().unwrap().to_owned(),
+                change["action"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    assert!(actions.contains(&("demo".to_owned(), "pin-only".to_owned())));
+    assert!(actions.contains(&("other".to_owned(), "update".to_owned())));
+
+    // The untouched skill keeps its installed file; the changed one updates.
+    assert_eq!(file_identity(&untouched), before);
+    assert_eq!(
+        fs::read_to_string(fixture.project.join(".agents/skills/other/data.txt")).unwrap(),
+        "two"
+    );
+    // Both entries end up pinned at the advanced commit.
+    assert_eq!(read_lock(&fixture).matches(&commit).count(), 2);
+}
+
+#[test]
+fn update_reinstalls_a_missing_destination_instead_of_advancing_the_pin_only() {
+    let fixture = Fixture::new();
+    fixture.init_add();
+    let installed = fixture.project.join(".agents/skills/demo");
+    fs::remove_dir_all(&installed).unwrap();
+    fixture.advance_unrelated("unrelated change");
+
+    let output = fixture
+        .command()
+        .args(["update", "--json"])
+        .output()
+        .unwrap();
+    assert_ok_ref(&output);
+    // A missing destination must be restored rather than merely repinned.
+    assert_eq!(json(&output)["changes"][0]["action"], "update");
+    assert_eq!(
+        fs::read_to_string(installed.join("data.txt")).unwrap(),
+        "one"
+    );
+    assert_ok(fixture.command().arg("check").output().unwrap());
+}
+
+#[test]
+fn pin_only_update_does_not_require_force_for_modified_content() {
+    let fixture = Fixture::new();
+    fixture.init_add();
+    let installed = fixture.project.join(".agents/skills/demo/data.txt");
+    fs::write(&installed, "locally modified").unwrap();
+    let commit = fixture.advance_unrelated("unrelated change");
+
+    let output = fixture
+        .command()
+        .args(["update", "--json"])
+        .output()
+        .unwrap();
+    assert_ok_ref(&output);
+    assert_eq!(json(&output)["changes"][0]["action"], "pin-only");
+    // Local modifications are preserved because nothing is replaced.
+    assert_eq!(fs::read_to_string(&installed).unwrap(), "locally modified");
+    assert!(read_lock(&fixture).contains(&commit));
+}
+
+#[test]
+fn pin_only_update_dry_run_leaves_scope_unchanged() {
+    let fixture = Fixture::new();
+    fixture.init_add();
+    let lock_path = fixture.project.join(".agents/skills.lock.yaml");
+    let old_lock = fs::read(&lock_path).unwrap();
+    let installed = fixture.project.join(".agents/skills/demo/data.txt");
+    let before = file_identity(&installed);
+    let commit = fixture.advance_unrelated("unrelated change");
+
+    let output = fixture
+        .command()
+        .args(["update", "--dry-run", "--json"])
+        .output()
+        .unwrap();
+    assert_ok_ref(&output);
+    let change = json(&output)["changes"][0].clone();
+    assert_eq!(change["action"], "pin-only");
+    assert_eq!(change["commit"], commit);
+    assert_eq!(change["dry_run"], true);
+    assert_eq!(fs::read(&lock_path).unwrap(), old_lock);
+    assert_eq!(file_identity(&installed), before);
+}
+
+#[test]
 fn diff_reports_deterministic_path_records() {
     let fixture = Fixture::new();
     fixture.init_add();
