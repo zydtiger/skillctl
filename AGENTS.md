@@ -95,7 +95,7 @@ Release steps:
 4. Publish a GitHub Release for the tag. Its notes are the version history: state user-visible changes, grouped as added, changed, fixed, and breaking, and link the issues and pull requests. The repository keeps no changelog file.
 5. Verify the published tag, the release, and installation from the exact tag with `cargo install --git … --tag vX.Y.Z`.
 
-Every release is a separate approval, even inside an approved task. Approval to edit, commit, push, or merge is never release approval, and approval for one release never covers the next. Immediately before pushing a release tag, and again before creating, updating, or deleting a GitHub Release, present the exact version and the commit it will point at, with the rationale that justifies that number under the scheme above, and wait for explicit approval.
+Every release is a separate approval, even inside an approved task. Approval to edit, commit, push, or merge is never release approval, and approval for one release never covers the next. Publishing a release is one action: ask once, immediately before pushing the tag, presenting the exact version, the commit it will point at, and the rationale that justifies that number under the scheme above. That approval covers publishing the GitHub Release from that tag. Ask again only for a different version or commit, or to modify or delete a release that already exists.
 
 A release must be reachable from `main` and must never be retagged. Correct a mistaken release by publishing the next version.
 
