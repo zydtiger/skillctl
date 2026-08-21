@@ -65,7 +65,6 @@ file, then the checks the hooks do not carry. Before handoff, run those:
 cargo test
 cargo build --release
 cargo install --path . --root <temporary-directory>
-python3 /Users/zyd/.codex/skills/.system/skill-creator/scripts/quick_validate.py .
 ```
 
 Also smoke-test the installed binary and inspect `git diff`/`git status`. Report exact blockers instead of claiming skipped checks passed.

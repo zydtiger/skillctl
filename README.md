@@ -167,15 +167,20 @@ Releases are Git tags named `vX.Y.Z` with GitHub Release notes describing the us
 
 ## Development
 
-Required handoff gates:
+Formatting and Clippy run as commit hooks, and CI runs that same configuration
+over every file. Install the runner once per machine:
 
 ```sh
-cargo fmt --check
-cargo clippy --all-targets --all-features -- -D warnings
+uv tool install prek
+prek install
+```
+
+Then run the checks the hooks do not carry:
+
+```sh
 cargo test
 cargo build --release
 cargo install --path . --root "$(mktemp -d)"
-python3 /Users/zyd/.codex/skills/.system/skill-creator/scripts/quick_validate.py .
 ```
 
 Tests use temporary local Git repositories and isolated homes; they require neither a network connection nor the planned `agent-workflows` repository.

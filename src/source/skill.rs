@@ -42,3 +42,29 @@ fn parse_frontmatter(content: &str) -> Result<&str> {
         .context("SKILL.md frontmatter is missing its closing ---")?;
     Ok(&rest[..end])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    /// The distributed `SKILL.md` is validated by the same code a consumer
+    /// runs, which is stricter than any external checker: the metadata struct
+    /// denies unknown fields, so an extra frontmatter key fails here.
+    ///
+    /// Only the file is copied out. Validating the repository root would walk
+    /// build output and depend on whatever it happens to contain.
+    #[test]
+    fn the_distributed_skill_validates_under_its_own_rules() {
+        let temp = tempdir().unwrap();
+        fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("SKILL.md"),
+            temp.path().join("SKILL.md"),
+        )
+        .unwrap();
+
+        let metadata = validate_skill_tree(temp.path()).unwrap();
+        assert_eq!(metadata.name, "skillctl-skill");
+        assert!(!metadata.description.trim().is_empty());
+    }
+}
