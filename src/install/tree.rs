@@ -81,7 +81,6 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 fn set_executable(path: &Path, executable: bool) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let mut permissions = fs::metadata(path)?.permissions();
@@ -90,19 +89,8 @@ fn set_executable(path: &Path, executable: bool) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(unix))]
-fn set_executable(_path: &Path, _executable: bool) -> Result<()> {
-    Ok(())
-}
-
-#[cfg(unix)]
 fn set_directory_permissions(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(path, fs::Permissions::from_mode(0o755))?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn set_directory_permissions(_path: &Path) -> Result<()> {
     Ok(())
 }

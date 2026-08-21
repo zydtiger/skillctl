@@ -99,17 +99,11 @@ fn unique_backup(parent: &Path, operation: &str) -> PathBuf {
     parent.join(token)
 }
 
-#[cfg(unix)]
 fn set_lock_permissions(file: &fs::File, target: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let mode = fs::metadata(target)
         .map(|metadata| metadata.permissions().mode() & 0o777)
         .unwrap_or(0o644);
     file.set_permissions(fs::Permissions::from_mode(mode))?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn set_lock_permissions(_file: &fs::File, _target: &Path) -> Result<()> {
     Ok(())
 }

@@ -1,3 +1,6 @@
+#[cfg(not(unix))]
+compile_error!("skillctl supports Linux and macOS only; it relies on POSIX file modes");
+
 pub mod cli;
 pub mod digest;
 pub mod error;
