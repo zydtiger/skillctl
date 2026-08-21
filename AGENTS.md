@@ -4,6 +4,8 @@
 
 `skillctl` is an independent Rust CLI that materializes reproducible Codex skills from strict YAML locks. A `mode: vendored` destination is owned by `skillctl`, is pinned to an immutable Git commit, and must match its deterministic digest and marker. A `mode: local` destination belongs to the consuming project: validate its shape, but never replace, hash-enforce, or delete its files. Committed project snapshots let a fresh clone use skills without installing the CLI.
 
+`skillctl` targets Linux and macOS. It reads and restores POSIX file modes to carry a file's executable bit, and that bit is part of a tree's digest, so a host without those modes would compute a different digest for an identical tree. Rather than keep no-op stubs that produce that divergence quietly, the crate refuses to compile elsewhere with an explicit message. Do not reintroduce platform-conditional fallbacks for file modes.
+
 ## Required reading and documentation ownership
 
 Before changing behavior, read this file, the relevant README command/schema sections, root `SKILL.md`, `Cargo.toml`, the affected source modules, and their tests. Keep contracts and their documentation synchronized:

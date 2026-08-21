@@ -129,15 +129,9 @@ fn frame(hasher: &mut Sha256, bytes: &[u8]) {
     hasher.update(bytes);
 }
 
-#[cfg(unix)]
 fn executable(metadata: &fs::Metadata) -> bool {
     use std::os::unix::fs::PermissionsExt;
     metadata.permissions().mode() & 0o111 != 0
-}
-
-#[cfg(not(unix))]
-fn executable(_metadata: &fs::Metadata) -> bool {
-    false
 }
 
 #[cfg(test)]
