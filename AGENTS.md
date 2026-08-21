@@ -15,6 +15,7 @@ Before changing behavior, read this file, the relevant README command/schema sec
 - Update `SKILL.md` when an agent's operational use of the CLI changes; keep it concise and distributable.
 - Update `Cargo.toml` for direct dependency/build changes and regenerate `Cargo.lock`; never hand-edit the lock.
 - Update module documentation and neighboring code when responsibility boundaries or invariants change.
+- Update `.pre-commit-config.yaml` when a mechanically checkable rule changes. `.github/workflows/ci.yml` runs that same configuration rather than restating its commands, so the checks have one definition and cannot drift apart.
 - Add or adjust tests with every corresponding behavior, error, schema, safety, transaction, or output contract change.
 
 Documentation and tests are part of each contract, not follow-up cleanup.
@@ -47,11 +48,20 @@ Keep responsibilities narrow and files reasonably sized. Prefer explicit data pa
 
 ## Validation gates
 
-Before handoff, run all of:
+Formatting and Clippy are enforced by the commit hooks: `cargo fmt` at commit
+time, and `cargo clippy --all-targets --all-features -- -D warnings` at push
+time, because it compiles the crate. Install the runner once per machine:
 
 ```sh
-cargo fmt --check
-cargo clippy --all-targets --all-features -- -D warnings
+uv tool install prek
+prek install
+```
+
+Apply them outside a commit with `prek run --all-files` and
+`prek run --all-files --hook-stage pre-push`. CI runs both stages over every
+file, then the checks the hooks do not carry. Before handoff, run those:
+
+```sh
 cargo test
 cargo build --release
 cargo install --path . --root <temporary-directory>

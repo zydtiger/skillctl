@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Add toolchain components
+        run: rustup component add rustfmt clippy
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Commit-stage hooks
+        run: uvx prek run --all-files
+      - name: Push-stage hooks
+        run: uvx prek run --all-files --hook-stage pre-push
+      - name: Tests
+        run: cargo test
+      - name: Release build
+        run: cargo build --release
+      - name: Install smoke test
+        run: |
+          cargo install --path . --root "$RUNNER_TEMP/skillctl"
+          "$RUNNER_TEMP/skillctl/bin/skillctl" --version
