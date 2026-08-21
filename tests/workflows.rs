@@ -91,6 +91,24 @@ fn check_is_offline_and_detects_missing_modified_and_marker_changes() {
 }
 
 #[test]
+fn generated_bytecode_caches_never_make_a_skill_look_modified() {
+    let fixture = Fixture::new();
+    fixture.init_add();
+    let installed = fixture.project.join(".agents/skills/demo");
+    let cache = installed.join("scripts/__pycache__");
+    fs::create_dir_all(&cache).unwrap();
+    fs::write(cache.join("helper.cpython-312.pyc"), b"compiled").unwrap();
+
+    let output = fixture
+        .command()
+        .args(["check", "--json"])
+        .output()
+        .unwrap();
+    assert_ok_ref(&output);
+    assert_eq!(json(&output)["skills"][0]["state"], "clean");
+}
+
+#[test]
 fn sync_restores_exact_commit_and_requires_force_for_changes() {
     let fixture = Fixture::new();
     fixture.init_add();
