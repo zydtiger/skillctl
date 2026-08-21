@@ -39,7 +39,7 @@ Keep responsibilities narrow and files reasonably sized. Prefer explicit data pa
 - Never overwrite modified vendored content without an explicit supported `--force` operation after reporting differences.
 - Never mutate a `mode: local` skill directory.
 - Keep the lock and installed tree mutually consistent with atomic writes or tested rollback protection.
-- Validate the full staged tree and digest before replacing anything. Exclude only the generated marker from source digesting.
+- Validate the full staged tree and digest before replacing anything. Exclude the generated marker and interpreter cache directories such as `__pycache__` from source digesting; a consumer running a skill's own script must not make that skill read as modified. Exclude nothing else, and keep symlinks rejected by name rather than skipped.
 - Keep `check` deterministically network-free. `status` queries upstream by default and must offer an explicit network-free `--offline` mode; `diff` may acquire its isolated pinned checkout. Read-only acquisition must never mutate installed state.
 - Preserve stable, deterministic JSON because it is a public API.
 

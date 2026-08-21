@@ -9,6 +9,12 @@ use walkdir::WalkDir;
 
 pub const MARKER_FILE: &str = ".skillctl-managed";
 
+/// Directories an interpreter writes beside a skill's own files when a
+/// consumer runs one of its scripts. They are machine-generated caches rather
+/// than authored content, so a skill that has only been used would otherwise
+/// read as modified and block its own update.
+pub const IGNORED_DIRECTORIES: [&str; 1] = ["__pycache__"];
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EntryKind {
@@ -61,7 +67,12 @@ pub fn inspect_tree(root: &Path) -> Result<BTreeMap<String, TreeRecord>> {
         bail!("skill tree {} is not a directory", root.display());
     }
     let mut records = BTreeMap::new();
-    for item in WalkDir::new(root).follow_links(false).min_depth(1) {
+    for item in WalkDir::new(root)
+        .follow_links(false)
+        .min_depth(1)
+        .into_iter()
+        .filter_entry(|entry| !is_ignored_directory(entry))
+    {
         let item = item.with_context(|| format!("could not walk {}", root.display()))?;
         let relative = item.path().strip_prefix(root)?;
         let path = relative
@@ -102,6 +113,17 @@ pub fn inspect_tree(root: &Path) -> Result<BTreeMap<String, TreeRecord>> {
     Ok(records)
 }
 
+/// A symlink is deliberately not matched here: it keeps its own rejection
+/// rather than being skipped by name.
+fn is_ignored_directory(entry: &walkdir::DirEntry) -> bool {
+    entry.depth() > 0
+        && entry.file_type().is_dir()
+        && entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| IGNORED_DIRECTORIES.contains(&name))
+}
+
 fn frame(hasher: &mut Sha256, bytes: &[u8]) {
     hasher.update((bytes.len() as u64).to_be_bytes());
     hasher.update(bytes);
@@ -136,5 +158,21 @@ mod tests {
         fs::create_dir(other.path().join("nested")).unwrap();
         fs::write(other.path().join("nested/file"), b"hello").unwrap();
         assert_eq!(first, digest_tree(other.path()).unwrap());
+    }
+
+    #[test]
+    fn digest_ignores_generated_bytecode_caches() {
+        let temp = tempdir().unwrap();
+        fs::create_dir(temp.path().join("scripts")).unwrap();
+        fs::write(temp.path().join("scripts/helper.py"), b"x = 1\n").unwrap();
+        let before = digest_tree(temp.path()).unwrap();
+
+        let cache = temp.path().join("scripts/__pycache__");
+        fs::create_dir(&cache).unwrap();
+        fs::write(cache.join("helper.cpython-312.pyc"), b"compiled").unwrap();
+        assert_eq!(before, digest_tree(temp.path()).unwrap());
+
+        let records = inspect_tree(temp.path()).unwrap();
+        assert!(records.keys().all(|path| !path.contains("__pycache__")));
     }
 }

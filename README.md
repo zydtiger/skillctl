@@ -82,7 +82,7 @@ skills:
     destination: project-owned-skill
 ```
 
-Schemas v1 and v2 reject unknown fields, unsupported versions, unsafe destinations, invalid conditional fields, duplicate destinations, and duplicate declared skill names. A v1 vendored source requires `path`; a v2 source requires exactly one of `path` or `file`. A `file` value must be a safe repository-relative path ending in `SKILL.md`. Vendored directories contain `.skillctl-managed`; it is metadata and is excluded from source digests.
+Schemas v1 and v2 reject unknown fields, unsupported versions, unsafe destinations, invalid conditional fields, duplicate destinations, and duplicate declared skill names. A v1 vendored source requires `path`; a v2 source requires exactly one of `path` or `file`. A `file` value must be a safe repository-relative path ending in `SKILL.md`. Vendored directories contain `.skillctl-managed`; it is metadata and is excluded from source digests. Interpreter cache directories such as `__pycache__` are excluded too, so running a skill's script does not make it read as modified; they are also left out of installed trees.
 
 Mutations validate content in isolated staging directories before replacement. Destination and lock changes use backups and rollback protection, and changed managed content is never replaced unless `sync` or `update` explicitly receives `--force`.
 
