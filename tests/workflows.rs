@@ -95,8 +95,11 @@ fn generated_bytecode_caches_never_make_a_skill_look_modified() {
     let fixture = Fixture::new();
     fixture.init_add();
     let installed = fixture.project.join(".agents/skills/demo");
-    let cache = installed.join("scripts/__pycache__");
-    fs::create_dir_all(&cache).unwrap();
+    // The cache goes beside files that already exist, as an interpreter would
+    // write it. Only the cache directory is ignored, so inventing a parent for
+    // it here would add that parent to the tree and change the digest.
+    let cache = installed.join("__pycache__");
+    fs::create_dir(&cache).unwrap();
     fs::write(cache.join("helper.cpython-312.pyc"), b"compiled").unwrap();
 
     let output = fixture
