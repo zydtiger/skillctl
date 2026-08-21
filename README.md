@@ -62,7 +62,7 @@ skills:
   issue-delivery:
     mode: vendored
     source:
-      repository: https://example.com/user/agent-workflows.git
+      repository: https://example.com/user/shared-skills.git
       path: skills/issue-delivery
       ref: main
     resolved:
@@ -183,7 +183,7 @@ cargo build --release
 cargo install --path . --root "$(mktemp -d)"
 ```
 
-Tests use temporary local Git repositories and isolated homes; they require neither a network connection nor the planned `agent-workflows` repository.
+Tests use temporary local Git repositories and isolated homes; they require neither a network connection nor any external repository.
 
 ## Version 2 limitations
 
