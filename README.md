@@ -51,7 +51,7 @@ project/
   .agents/
     skills.lock.yaml
     skills/
-      issue-delivery/
+      example-skill/
 ```
 
 New locks use schema version 2. Version 1 directory-source locks remain readable; file sources require version 2. Adding a file source to a valid v1 lock upgrades that lock to v2 while preserving its existing directory entries and installed markers.
@@ -59,16 +59,16 @@ New locks use schema version 2. Version 1 directory-source locks remain readable
 ```yaml
 version: 2
 skills:
-  issue-delivery:
+  example-skill:
     mode: vendored
     source:
       repository: https://example.com/user/shared-skills.git
-      path: skills/issue-delivery
+      path: skills/example-skill
       ref: main
     resolved:
       commit: 0123456789abcdef0123456789abcdef01234567
       digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-    destination: issue-delivery
+    destination: example-skill
   skillctl-skill:
     mode: vendored
     source:
@@ -141,9 +141,9 @@ Safe workflow:
 ```sh
 skillctl check
 skillctl status
-skillctl diff issue-delivery
-skillctl update issue-delivery --dry-run
-skillctl update issue-delivery
+skillctl diff example-skill
+skillctl update example-skill --dry-run
+skillctl update example-skill
 skillctl check
 ```
 
