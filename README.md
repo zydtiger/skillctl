@@ -10,10 +10,10 @@ The lock mechanism is a `skillctl` convention, not an official built-in Codex lo
 
 ## Installation
 
-Install the binary directly from the repository without cloning it. Prefer a tag so the installed binary is a known release:
+Install the binary directly from the repository without cloning it. Prefer a tag so the installed binary is a known release, taking `vX.Y.Z` from the [releases page](https://github.com/zydtiger/skillctl/releases):
 
 ```sh
-cargo install --git https://github.com/zydtiger/skillctl.git --tag v0.2.1
+cargo install --git https://github.com/zydtiger/skillctl.git --tag vX.Y.Z
 ```
 
 Omit `--tag` to track the default branch, which may contain unreleased changes:
