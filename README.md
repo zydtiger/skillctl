@@ -1,10 +1,10 @@
 # skillctl
 
-`skillctl` is a Rust CLI for reproducibly managing Codex skills. It reads a declarative YAML lock, installs Git-pinned snapshots into `.agents/skills/`, detects local changes, and updates snapshots from their authoritative repositories. Already-vendored project skills remain usable after cloning without `skillctl`.
+`skillctl` is a Rust CLI for reproducibly managing agent skills. It reads a declarative YAML lock, installs Git-pinned snapshots into `.agents/skills/`, detects local changes, and updates snapshots from their authoritative repositories. Already-vendored project skills remain usable after cloning without `skillctl`.
 
 The ownership rule is deliberate: `mode: vendored` means `skillctl` owns and integrity-checks the destination; `mode: local` means the consuming project owns it and mutation commands never replace its files.
 
-The lock mechanism is a `skillctl` convention, not an official built-in Codex lock-file feature.
+The lock mechanism is a `skillctl` convention, not an official built-in lock-file feature of any agent CLI.
 
 `skillctl` runs on Linux and macOS. It uses POSIX file modes to record and restore the executable bit, and that bit is part of a tree's digest, so a host without those modes would compute a different digest for the same tree. Building elsewhere fails with an explicit message instead.
 

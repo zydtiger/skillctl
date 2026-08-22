@@ -1,6 +1,6 @@
 ---
 name: skillctl-skill
-description: Manage project-local and global Codex skills from .agents/skills.lock.yaml files using the skillctl CLI, including initializing locks, installing pinned vendored skill directories or individual SKILL.md files, checking integrity, comparing changes, synchronizing exact revisions, and updating shared skills safely.
+description: Manage project-local and global agent skills from .agents/skills.lock.yaml files using the skillctl CLI, including initializing locks, installing pinned vendored skill directories or individual SKILL.md files, checking integrity, comparing changes, synchronizing exact revisions, and updating shared skills safely.
 ---
 
 # Use skillctl
