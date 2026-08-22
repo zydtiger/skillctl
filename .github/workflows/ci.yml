@@ -16,9 +16,9 @@ jobs:
       - uses: actions/checkout@v5
       - name: Add toolchain components
         run: rustup component add rustfmt clippy
+      # uv is here only to run prek; there is no Python dependency manifest for
+      # its cache to key on.
       - uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
       - name: Commit-stage hooks
         run: uvx prek run --all-files
       - name: Push-stage hooks
