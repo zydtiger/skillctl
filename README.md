@@ -44,7 +44,7 @@ one of the commands above.
 
 ## Layout and lock schema
 
-Project scope is the default. Commands discover `.agents/skills.lock.yaml` by walking upward from the current directory. `init` is the exception: without `--global`, it always initializes the current directory and never selects a parent lock. `--global` exclusively uses `${SKILLCTL_HOME:-$HOME}/.agents` (`SKILLCTL_HOME` is primarily a test/automation seam).
+Project scope is the default. Commands discover `.agents/skills.lock.yaml` by walking upward from the current directory. The global root is skipped during that walk, so `${SKILLCTL_HOME:-$HOME}/.agents/skills.lock.yaml` is never adopted as a project lock. A command started under the home directory with no project lock above it fails, and when the global installation exists the error points at `--global` instead of switching scope on its own; scope is always an explicit input. `init` is the exception to discovery: without `--global`, it always initializes the current directory and never selects a parent lock. `--global` exclusively uses `${SKILLCTL_HOME:-$HOME}/.agents` (`SKILLCTL_HOME` is primarily a test/automation seam).
 
 ```text
 project/
