@@ -65,6 +65,19 @@ pub fn entry_state(scope: &Scope, name: &str, entry: &SkillEntry) -> EntryState 
             };
         }
     };
+    // A scope disagreement is a different fault from a content mismatch: the
+    // destination is a snapshot installed under another scope, so report it as
+    // such instead of as generic marker/lock corruption.
+    if marker.scope != expected_marker.scope {
+        return EntryState {
+            state: "invalid".to_owned(),
+            details: vec![format!(
+                "managed marker declares {} scope but this lock is checked as {} scope",
+                marker.scope, expected_marker.scope
+            )],
+            metadata: Some(metadata),
+        };
+    }
     if marker != expected_marker {
         return EntryState {
             state: "invalid".to_owned(),

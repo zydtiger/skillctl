@@ -63,16 +63,37 @@ impl Scope {
             return Ok(scope);
         }
 
+        // The global installation lives at `${SKILLCTL_HOME:-$HOME}/.agents` and
+        // is structurally identical to a project lock rooted at the home
+        // directory. Skipping that one root keeps the upward walk from silently
+        // adopting the global installation as a project, which no verb may do.
+        let global = Self::global().ok();
         let start = absolute(cwd)?;
         for directory in start.ancestors() {
+            if global
+                .as_ref()
+                .is_some_and(|global| same_directory(directory, &global.root))
+            {
+                continue;
+            }
             if directory.join(LOCK_RELATIVE).is_file() {
                 return Ok(Self::at(ScopeKind::Project, directory.to_path_buf()));
             }
         }
+        let redirect = global
+            .filter(|global| global.lock_file.is_file())
+            .map(|global| {
+                format!(
+                    "; the global installation exists at {}; use --global to operate on it",
+                    global.lock_file.display()
+                )
+            })
+            .unwrap_or_default();
         bail!(
-            "no {} found from {} upward; run `skillctl init` in the intended project root",
+            "no project {} found from {} upward; run `skillctl init` in the intended project root{}",
             LOCK_RELATIVE,
-            start.display()
+            start.display(),
+            redirect
         )
     }
 
@@ -81,6 +102,19 @@ impl Scope {
             .or_else(|| env::var_os("HOME"))
             .context("neither SKILLCTL_HOME nor HOME is set")?;
         Ok(Self::at(ScopeKind::Global, PathBuf::from(home)))
+    }
+}
+
+/// Compare two directories by path, falling back to canonical paths so a
+/// symlinked home (`/var` on macOS, or a linked `$HOME`) still matches the
+/// resolved working directory the ancestor walk starts from.
+fn same_directory(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
     }
 }
 
