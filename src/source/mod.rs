@@ -35,14 +35,27 @@ pub fn acquire_repository(repository: &str, reference: Option<&str>) -> Result<A
     validate_repository(repository)?;
     let temp = tempfile::tempdir().context("could not create source staging directory")?;
     let bare = temp.path().join("repository.git");
-    git::clone_bare(repository, &bare)?;
 
-    let followed = match reference {
-        Some(value) if !value.trim().is_empty() => value.to_owned(),
+    // A user-supplied reference is validated before it ever reaches a Git
+    // argument, since it drives the `--branch` and `fetch` attempts below.
+    let requested = match reference {
+        Some(value) if !value.trim().is_empty() => {
+            validate_git_reference(value)?;
+            Some(value.to_owned())
+        }
         Some(_) => bail!("ref must not be empty"),
-        None => git::default_branch(&bare)?,
+        None => None,
     };
-    validate_git_reference(&followed)?;
+    git::acquire_bare(repository, &bare, requested.as_deref())?;
+
+    let followed = match requested {
+        Some(value) => value,
+        None => {
+            let discovered = git::default_branch(&bare)?;
+            validate_git_reference(&discovered)?;
+            discovered
+        }
+    };
     let commit = git::resolve_revision(&bare, &followed)?;
     Ok(AcquiredRepository {
         _temp: temp,

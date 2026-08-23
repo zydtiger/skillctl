@@ -26,7 +26,7 @@ Documentation and tests are part of each contract, not follow-up cleanup.
 - `src/error.rs`: structured command failures that preserve machine-readable error results.
 - `src/scope.rs`: project upward discovery, explicit init root, isolated global resolution, and paths.
 - `src/lockfile/`: strict versioned YAML schema and separate validation for selectors, names, collisions, revisions, digests, and safe relative paths.
-- `src/source/`: system-Git acquisition, revision/default-branch resolution, directory or single-file snapshot export, and isolated `SKILL.md` validation. Never execute acquired content.
+- `src/source/`: system-Git acquisition, revision/default-branch resolution, directory or single-file snapshot export, and isolated `SKILL.md` validation. Never execute acquired content. Acquisition prefers a shallow, single-branch, or commit-addressed transfer over a full clone and always falls back to a full clone when the narrower transfer is not resolvable, so resolution results and exported trees stay identical either way.
 - `src/digest.rs`: deterministic, framed, sorted source-tree hashing and comparisons.
 - `src/install/`: managed-marker handling, installed state, tree comparison/copying, scope validation, and mutation policy.
 - `src/transaction.rs`: atomic lock writes, destination replacement, backup, rollback, and cleanup.
