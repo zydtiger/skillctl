@@ -290,6 +290,81 @@ fn local_entries_are_project_owned_and_have_no_upstream_dimension() {
 }
 
 #[test]
+fn status_reports_deterministic_states_across_distinct_reachable_and_unreachable_sources() {
+    let fixture = Fixture::new();
+    let repo2 = fixture._temp.path().join("source2");
+    fs::create_dir_all(repo2.join("skills/other")).unwrap();
+    git(&repo2, &["init", "-q", "-b", "main"]);
+    git(&repo2, &["config", "user.email", "tests@example.com"]);
+    git(&repo2, &["config", "user.name", "Tests"]);
+    write_skill(&repo2.join("skills/other"), "other", "one");
+    git(&repo2, &["add", "."]);
+    git(&repo2, &["commit", "-qm", "initial"]);
+
+    fixture.init_add();
+    assert_ok(
+        fixture
+            .command()
+            .args(["add", repo2.to_str().unwrap(), "--path", "skills/other"])
+            .output()
+            .unwrap(),
+    );
+
+    // `demo` and `other` vendor from two genuinely distinct repositories.
+    // Advance the first so its entry reports an update, and make the second
+    // unreachable, so the concurrent acquisition phase must resolve each
+    // source independently and still report the same states a sequential
+    // run would have.
+    let upstream_commit = fixture.advance("two");
+    fs::remove_dir_all(&repo2).unwrap();
+
+    let output = fixture
+        .command()
+        .args(["status", "--json"])
+        .output()
+        .unwrap();
+    assert_ok_ref(&output);
+    let document = json(&output);
+    assert_eq!(document["ok"], true);
+    let skills = document["skills"].as_array().unwrap();
+    let demo = skills.iter().find(|skill| skill["name"] == "demo").unwrap();
+    let other = skills
+        .iter()
+        .find(|skill| skill["name"] == "other")
+        .unwrap();
+    assert_eq!(demo["upstream_status"], "update_available");
+    assert_eq!(demo["upstream_commit"], upstream_commit);
+    assert_eq!(demo["content_changed"], true);
+    assert_eq!(other["upstream_status"], "unreachable");
+    assert!(other["upstream_commit"].is_null());
+    assert!(other["content_changed"].is_null());
+    assert_eq!(other["upstream_details"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        other["recommended_action"],
+        "retry; verify repository/ref access"
+    );
+
+    let human = fixture.command().arg("status").output().unwrap();
+    assert_ok_ref(&human);
+    let stdout = String::from_utf8(human.stdout).unwrap();
+    assert!(stdout.contains("demo"));
+    assert!(stdout.contains("other"));
+    assert!(stdout.contains("update_available"));
+    assert!(stdout.contains("unreachable"));
+    assert_eq!(stdout.matches("Upstream error:").count(), 1);
+
+    // Re-run to confirm the JSON document is stable and deterministic across
+    // runs rather than depending on acquisition completion order.
+    let repeat = fixture
+        .command()
+        .args(["status", "--json"])
+        .output()
+        .unwrap();
+    assert_ok_ref(&repeat);
+    assert_eq!(json(&repeat), document);
+}
+
+#[test]
 fn status_recommended_actions_carry_the_global_scope_flag() {
     let fixture = Fixture::new();
     let home = fixture._temp.path().join("home");

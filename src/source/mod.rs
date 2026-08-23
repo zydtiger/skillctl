@@ -10,6 +10,7 @@ use crate::lockfile::{
 use anyhow::{bail, Context, Result};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use tempfile::TempDir;
 
 #[derive(Debug)]
@@ -99,4 +100,39 @@ pub fn acquire(
     reference: Option<&str>,
 ) -> Result<Snapshot> {
     acquire_repository(repository, reference)?.select(selector)
+}
+
+/// Bound on in-flight acquisitions, so a lock with many distinct sources does
+/// not spawn unbounded concurrent `git` subprocesses at once.
+const MAX_CONCURRENT_ACQUISITIONS: usize = 8;
+
+/// Acquire several distinct `(repository, reference)` sources concurrently,
+/// bounded to at most [`MAX_CONCURRENT_ACQUISITIONS`] in-flight acquisitions.
+/// Every acquisition already runs in its own temporary directory through
+/// `acquire_repository`, so concurrent acquisitions share no mutable state.
+///
+/// Results are returned in the same order as `groups`; each entry is
+/// independent of the others, so a caller decides how to fold them, e.g. keep
+/// only the first error in a specific order, or record a per-group failure
+/// without failing the whole run.
+pub fn acquire_many(groups: &[(String, String)]) -> Vec<Result<AcquiredRepository>> {
+    let mut results = Vec::with_capacity(groups.len());
+    for chunk in groups.chunks(MAX_CONCURRENT_ACQUISITIONS) {
+        let slots: Vec<Mutex<Option<Result<AcquiredRepository>>>> =
+            chunk.iter().map(|_| Mutex::new(None)).collect();
+        std::thread::scope(|scope| {
+            for ((repository, reference), slot) in chunk.iter().zip(&slots) {
+                scope.spawn(move || {
+                    let result = acquire_repository(repository, Some(reference));
+                    *slot.lock().expect("acquisition slot mutex") = Some(result);
+                });
+            }
+        });
+        results.extend(slots.into_iter().map(|slot| {
+            slot.into_inner()
+                .expect("acquisition slot mutex")
+                .expect("acquisition slot filled by its thread")
+        }));
+    }
+    results
 }

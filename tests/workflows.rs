@@ -620,6 +620,63 @@ fn update_and_sync_abort_without_any_write_when_acquisition_fails() {
 }
 
 #[test]
+fn update_and_sync_abort_without_any_write_when_one_of_several_distinct_sources_is_unreachable() {
+    let fixture = Fixture::new();
+    let repo2 = fixture._temp.path().join("source2");
+    fs::create_dir_all(repo2.join("skills/other")).unwrap();
+    git(&repo2, &["init", "-q", "-b", "main"]);
+    git(&repo2, &["config", "user.email", "tests@example.com"]);
+    git(&repo2, &["config", "user.name", "Tests"]);
+    write_skill(&repo2.join("skills/other"), "other", "one");
+    git(&repo2, &["add", "."]);
+    git(&repo2, &["commit", "-qm", "initial"]);
+
+    fixture.init_add();
+    assert_ok(
+        fixture
+            .command()
+            .args(["add", repo2.to_str().unwrap(), "--path", "skills/other"])
+            .output()
+            .unwrap(),
+    );
+    let lock_path = fixture.project.join(".agents/skills.lock.yaml");
+    let old_lock = fs::read(&lock_path).unwrap();
+    let demo_before = file_identity(&fixture.project.join(".agents/skills/demo/data.txt"));
+    let other_before = file_identity(&fixture.project.join(".agents/skills/other/data.txt"));
+
+    // `demo`'s repository stays reachable and advances; `other`'s repository,
+    // a genuinely distinct source, disappears entirely. Even though `demo`'s
+    // acquisition would succeed, the run must abort before any mutation,
+    // including for the entry whose own source was fine.
+    fixture.advance("two");
+    fs::remove_dir_all(&repo2).unwrap();
+
+    let update_output = fixture.command().arg("update").output().unwrap();
+    assert_fail(&update_output);
+    assert_eq!(fs::read(&lock_path).unwrap(), old_lock);
+    assert_eq!(
+        file_identity(&fixture.project.join(".agents/skills/demo/data.txt")),
+        demo_before
+    );
+    assert_eq!(
+        file_identity(&fixture.project.join(".agents/skills/other/data.txt")),
+        other_before
+    );
+
+    let sync_output = fixture.command().arg("sync").output().unwrap();
+    assert_fail(&sync_output);
+    assert_eq!(fs::read(&lock_path).unwrap(), old_lock);
+    assert_eq!(
+        file_identity(&fixture.project.join(".agents/skills/demo/data.txt")),
+        demo_before
+    );
+    assert_eq!(
+        file_identity(&fixture.project.join(".agents/skills/other/data.txt")),
+        other_before
+    );
+}
+
+#[test]
 fn update_and_sync_report_the_alphabetically_first_entrys_source_error() {
     let fixture = Fixture::new();
     assert_ok(fixture.command().arg("init").output().unwrap());
