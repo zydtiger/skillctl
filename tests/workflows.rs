@@ -436,3 +436,238 @@ fn local_entries_are_never_mutated_and_remove_keeps_files() {
             .contains("local-one")
     );
 }
+
+#[test]
+fn update_clones_shared_repository_once_for_multiple_vendored_entries() {
+    let fixture = Fixture::new();
+    write_skill(&fixture.repo.join("skills/extra"), "extra", "one");
+    git(&fixture.repo, &["add", "."]);
+    git(&fixture.repo, &["commit", "-qm", "add extra skill"]);
+    fixture.init_add();
+    assert_ok(
+        fixture
+            .command()
+            .args([
+                "add",
+                fixture.repo.to_str().unwrap(),
+                "--path",
+                "skills/extra",
+            ])
+            .output()
+            .unwrap(),
+    );
+
+    // Both entries vendor from the same repository and follow the same
+    // `main` reference, so `update` must acquire that source only once.
+    write_skill(&fixture.repo.join("skills/demo"), "demo", "two");
+    write_skill(&fixture.repo.join("skills/extra"), "extra", "two");
+    git(&fixture.repo, &["add", "."]);
+    git(&fixture.repo, &["commit", "-qm", "advance both skills"]);
+    let commit = git_stdout(&fixture.repo, &["rev-parse", "HEAD"]);
+
+    let spy = GitSpy::new();
+    let output = fixture
+        .command()
+        .env("PATH", spy.path_with_spy())
+        .args(["update", "--json"])
+        .output()
+        .unwrap();
+    assert_ok_ref(&output);
+    assert_eq!(spy.clone_invocations(), 1);
+
+    let changes = json(&output)["changes"].as_array().unwrap().clone();
+    let actions: Vec<(String, String, String)> = changes
+        .iter()
+        .map(|change| {
+            (
+                change["name"].as_str().unwrap().to_owned(),
+                change["action"].as_str().unwrap().to_owned(),
+                change["commit"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        actions,
+        vec![
+            ("demo".to_owned(), "update".to_owned(), commit.clone()),
+            ("extra".to_owned(), "update".to_owned(), commit.clone()),
+        ]
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.project.join(".agents/skills/demo/data.txt")).unwrap(),
+        "two"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.project.join(".agents/skills/extra/data.txt")).unwrap(),
+        "two"
+    );
+    assert_eq!(read_lock(&fixture).matches(&commit).count(), 2);
+    assert_ok(fixture.command().arg("check").output().unwrap());
+}
+
+#[test]
+fn sync_clones_shared_repository_once_for_multiple_pinned_entries() {
+    let fixture = Fixture::new();
+    write_skill(&fixture.repo.join("skills/extra"), "extra", "one");
+    git(&fixture.repo, &["add", "."]);
+    git(&fixture.repo, &["commit", "-qm", "add extra skill"]);
+    fixture.init_add();
+    assert_ok(
+        fixture
+            .command()
+            .args([
+                "add",
+                fixture.repo.to_str().unwrap(),
+                "--path",
+                "skills/extra",
+            ])
+            .output()
+            .unwrap(),
+    );
+
+    // Both entries are pinned to the same commit of the same repository, so
+    // `sync` must acquire that source only once.
+    fs::remove_dir_all(fixture.project.join(".agents/skills/demo")).unwrap();
+    fs::remove_dir_all(fixture.project.join(".agents/skills/extra")).unwrap();
+
+    let spy = GitSpy::new();
+    let output = fixture
+        .command()
+        .env("PATH", spy.path_with_spy())
+        .args(["sync", "--json"])
+        .output()
+        .unwrap();
+    assert_ok_ref(&output);
+    assert_eq!(spy.clone_invocations(), 1);
+
+    let changes = json(&output)["changes"].as_array().unwrap().clone();
+    let actions: Vec<(String, String)> = changes
+        .iter()
+        .map(|change| {
+            (
+                change["name"].as_str().unwrap().to_owned(),
+                change["action"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        actions,
+        vec![
+            ("demo".to_owned(), "sync".to_owned()),
+            ("extra".to_owned(), "sync".to_owned()),
+        ]
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.project.join(".agents/skills/demo/data.txt")).unwrap(),
+        "one"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.project.join(".agents/skills/extra/data.txt")).unwrap(),
+        "one"
+    );
+    assert_ok(fixture.command().arg("check").output().unwrap());
+}
+
+#[test]
+fn update_and_sync_abort_without_any_write_when_acquisition_fails() {
+    let fixture = Fixture::new();
+    write_skill(&fixture.repo.join("skills/extra"), "extra", "one");
+    git(&fixture.repo, &["add", "."]);
+    git(&fixture.repo, &["commit", "-qm", "add extra skill"]);
+    fixture.init_add();
+    assert_ok(
+        fixture
+            .command()
+            .args([
+                "add",
+                fixture.repo.to_str().unwrap(),
+                "--path",
+                "skills/extra",
+            ])
+            .output()
+            .unwrap(),
+    );
+    let lock_path = fixture.project.join(".agents/skills.lock.yaml");
+    let old_lock = fs::read(&lock_path).unwrap();
+    let demo_before = file_identity(&fixture.project.join(".agents/skills/demo/data.txt"));
+    let extra_before = file_identity(&fixture.project.join(".agents/skills/extra/data.txt"));
+
+    fs::remove_dir_all(&fixture.repo).unwrap();
+
+    let update_output = fixture.command().arg("update").output().unwrap();
+    assert_fail(&update_output);
+    assert_eq!(fs::read(&lock_path).unwrap(), old_lock);
+    assert_eq!(
+        file_identity(&fixture.project.join(".agents/skills/demo/data.txt")),
+        demo_before
+    );
+    assert_eq!(
+        file_identity(&fixture.project.join(".agents/skills/extra/data.txt")),
+        extra_before
+    );
+
+    let sync_output = fixture.command().arg("sync").output().unwrap();
+    assert_fail(&sync_output);
+    assert_eq!(fs::read(&lock_path).unwrap(), old_lock);
+    assert_eq!(
+        file_identity(&fixture.project.join(".agents/skills/demo/data.txt")),
+        demo_before
+    );
+    assert_eq!(
+        file_identity(&fixture.project.join(".agents/skills/extra/data.txt")),
+        extra_before
+    );
+}
+
+#[test]
+fn update_and_sync_report_the_alphabetically_first_entrys_source_error() {
+    let fixture = Fixture::new();
+    assert_ok(fixture.command().arg("init").output().unwrap());
+    // Entry name order (`aaa`, `zzz`) is the reverse of these repositories'
+    // sort order, so acquiring in sorted-tuple order instead of first-name
+    // order would surface `zzz`'s repository, not `aaa`'s.
+    fs::write(
+        fixture.project.join(".agents/skills.lock.yaml"),
+        concat!(
+            "version: 2\n",
+            "skills:\n",
+            "  aaa:\n",
+            "    mode: vendored\n",
+            "    source:\n",
+            "      repository: /nonexistent/zzz-repo\n",
+            "      path: skills/aaa\n",
+            "      ref: main\n",
+            "    resolved:\n",
+            "      commit: \"111111111111111111111111111111111111111a\"\n",
+            "      digest: \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n",
+            "    destination: aaa\n",
+            "  zzz:\n",
+            "    mode: vendored\n",
+            "    source:\n",
+            "      repository: /nonexistent/aaa-repo\n",
+            "      path: skills/zzz\n",
+            "      ref: main\n",
+            "    resolved:\n",
+            "      commit: \"222222222222222222222222222222222222222b\"\n",
+            "      digest: \"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"\n",
+            "    destination: zzz\n",
+        ),
+    )
+    .unwrap();
+
+    // Both entries' sources fail to acquire. The surfaced error must name the
+    // alphabetically-first ENTRY's repository (`aaa` -> `/nonexistent/zzz-repo`),
+    // matching the prior sequential-by-name acquisition order, not whichever
+    // (repository, ref/commit) tuple happens to sort first.
+    let update_output = fixture.command().arg("update").output().unwrap();
+    assert_fail(&update_output);
+    let update_stderr = String::from_utf8_lossy(&update_output.stderr).into_owned();
+    assert!(update_stderr.contains("/nonexistent/zzz-repo"));
+    assert!(!update_stderr.contains("/nonexistent/aaa-repo"));
+
+    let sync_output = fixture.command().arg("sync").output().unwrap();
+    assert_fail(&sync_output);
+    let sync_stderr = String::from_utf8_lossy(&sync_output.stderr).into_owned();
+    assert!(sync_stderr.contains("/nonexistent/zzz-repo"));
+    assert!(!sync_stderr.contains("/nonexistent/aaa-repo"));
+}

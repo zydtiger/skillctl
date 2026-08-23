@@ -143,6 +143,70 @@ pub(crate) fn read_lock(fixture: &Fixture) -> String {
     fs::read_to_string(fixture.project.join(".agents/skills.lock.yaml")).unwrap()
 }
 
+/// Wraps the system `git` binary behind a directory that can be prepended to
+/// `PATH`, logging every invocation's arguments to a file so a test can count
+/// how many times a subcommand such as `clone` actually ran.
+pub(crate) struct GitSpy {
+    _dir: TempDir,
+    bin_dir: PathBuf,
+    log: PathBuf,
+}
+
+impl GitSpy {
+    pub(crate) fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let log = dir.path().join("git-invocations.log");
+        let real_git = which_git();
+        let script = format!(
+            "#!/bin/sh\necho \"$@\" >> \"{}\"\nexec \"{}\" \"$@\"\n",
+            log.display(),
+            real_git
+        );
+        let script_path = bin_dir.join("git");
+        fs::write(&script_path, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&script_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&script_path, permissions).unwrap();
+        }
+        Self {
+            _dir: dir,
+            bin_dir,
+            log,
+        }
+    }
+
+    /// A `PATH` value with the spy directory ahead of the real one, so a
+    /// command run with it invokes the spy instead of the system `git`.
+    pub(crate) fn path_with_spy(&self) -> String {
+        let existing = std::env::var("PATH").unwrap_or_default();
+        format!("{}:{existing}", self.bin_dir.display())
+    }
+
+    /// Number of logged invocations whose arguments include `clone` as a
+    /// standalone token, i.e. actual `git clone` calls.
+    pub(crate) fn clone_invocations(&self) -> usize {
+        fs::read_to_string(&self.log)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| line.split_whitespace().any(|token| token == "clone"))
+            .count()
+    }
+}
+
+fn which_git() -> String {
+    let output = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    assert_ok_ref(&output);
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
 pub(crate) fn json(output: &Output) -> Value {
     serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
         panic!(

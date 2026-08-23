@@ -3,10 +3,11 @@ use crate::install::{marker_for, read_marker, write_marker};
 use crate::lockfile::{Mode, Resolved};
 use crate::output::Envelope;
 use crate::scope::Scope;
-use crate::source::acquire;
+use crate::source::acquire_repository;
 use crate::transaction::atomic_write;
 use anyhow::{bail, Context, Result};
 use serde_json::json;
+use std::collections::BTreeMap;
 
 pub(super) fn sync(
     scope: &Scope,
@@ -16,6 +17,30 @@ pub(super) fn sync(
 ) -> Result<(Envelope, Vec<String>)> {
     let lock = load_lock(scope)?;
     let names = select_names(&lock, selected)?;
+
+    // Acquire each distinct (repository, pinned commit) pair once, the same
+    // grouping `status`'s upstream_states uses, so several entries vendored
+    // from the same source at the same pin share a single acquisition. Groups
+    // are acquired lazily in the names' existing order, on each group's first
+    // encounter, so a run with several broken sources still fails on the same
+    // source the prior one-acquisition-per-entry code would have hit first.
+    // Every acquisition happens here, strictly before any destination,
+    // marker, or lock mutation below, so a failed acquisition still aborts
+    // the run with nothing written.
+    let mut acquired = BTreeMap::new();
+    for name in &names {
+        let entry = lock.skills.get(name).expect("selected entry");
+        if entry.mode == Mode::Local {
+            continue;
+        }
+        let source = entry.source.as_ref().expect("validated lock");
+        let resolved = entry.resolved.as_ref().expect("validated lock");
+        let key = (source.repository.clone(), resolved.commit.clone());
+        if let std::collections::btree_map::Entry::Vacant(slot) = acquired.entry(key.clone()) {
+            slot.insert(acquire_repository(&key.0, Some(&key.1))?);
+        }
+    }
+
     let mut prepared = Vec::new();
     let mut skipped = Vec::new();
     for name in names {
@@ -29,11 +54,10 @@ pub(super) fn sync(
         }
         let source = entry.source.as_ref().expect("validated lock");
         let resolved = entry.resolved.as_ref().expect("validated lock");
-        let snapshot = acquire(
-            &source.repository,
-            &source.selector()?,
-            Some(&resolved.commit),
-        )?;
+        let repo = acquired
+            .get(&(source.repository.clone(), resolved.commit.clone()))
+            .expect("acquired source group");
+        let snapshot = repo.select(&source.selector()?)?;
         if snapshot.commit != resolved.commit || snapshot.digest != resolved.digest {
             bail!(
                 "pinned snapshot for `{name}` does not match lock: got {} {}, expected {} {}",
@@ -83,6 +107,29 @@ pub(super) fn update(
     let mut lock = load_lock(scope)?;
     let names = select_names(&lock, selected)?;
     let original = lock.clone();
+
+    // Acquire each distinct (repository, followed reference) pair once, the
+    // same grouping `status`'s upstream_states uses, so several entries that
+    // track the same branch or tag share a single acquisition. Groups are
+    // acquired lazily in the names' existing order, on each group's first
+    // encounter, so a run with several broken sources still fails on the same
+    // source the prior one-acquisition-per-entry code would have hit first.
+    // Every acquisition happens here, strictly before any destination,
+    // marker, or lock mutation below, so a failed acquisition still aborts
+    // the run with nothing written.
+    let mut acquired = BTreeMap::new();
+    for name in &names {
+        let old = original.skills.get(name).expect("selected entry");
+        if old.mode == Mode::Local {
+            continue;
+        }
+        let source = old.source.as_ref().expect("validated lock");
+        let key = (source.repository.clone(), source.reference.clone());
+        if let std::collections::btree_map::Entry::Vacant(slot) = acquired.entry(key.clone()) {
+            slot.insert(acquire_repository(&key.0, Some(&key.1))?);
+        }
+    }
+
     let mut prepared = Vec::new();
     let mut pin_only = Vec::new();
     let mut envelope = Envelope::new(scope);
@@ -97,11 +144,10 @@ pub(super) fn update(
             continue;
         }
         let source = old.source.as_ref().expect("validated lock");
-        let snapshot = acquire(
-            &source.repository,
-            &source.selector()?,
-            Some(&source.reference),
-        )?;
+        let repo = acquired
+            .get(&(source.repository.clone(), source.reference.clone()))
+            .expect("acquired source group");
+        let snapshot = repo.select(&source.selector()?)?;
         let resolved = old.resolved.as_ref().expect("validated lock");
         // A pin-only advance assumes the destination already holds the pinned
         // content, so it only applies to an installed destination. A missing
