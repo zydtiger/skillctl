@@ -4,7 +4,7 @@ use crate::install::{entry_state, skill_json, EntryState};
 use crate::lockfile::{LockFile, Mode, SourceSelector};
 use crate::output::Envelope;
 use crate::scope::{Scope, ScopeKind};
-use crate::source::{acquire_repository, validate_skill_tree};
+use crate::source::{acquire_many, validate_skill_tree, AcquiredRepository};
 use anyhow::Result;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -217,8 +217,22 @@ fn upstream_states(lock: &LockFile, offline: bool) -> BTreeMap<String, UpstreamS
         }
     }
 
+    // Acquire every distinct group concurrently, bounded inside
+    // `acquire_many`, so several unreachable or slow sources do not serialize
+    // the network phase. Results are collected before any per-name state is
+    // derived, so the derivation below runs sequentially over an already
+    // completed, ordered map and produces the same output regardless of
+    // completion order.
+    let keys: Vec<(String, String)> = groups.keys().cloned().collect();
+    let results = acquire_many(&keys);
+    let mut acquired_groups: BTreeMap<(String, String), Result<AcquiredRepository>> =
+        keys.into_iter().zip(results).collect();
+
     for ((repository, reference), names) in groups {
-        match acquire_repository(&repository, Some(&reference)) {
+        let result = acquired_groups
+            .remove(&(repository.clone(), reference.clone()))
+            .expect("every built group was acquired");
+        match result {
             Ok(acquired) => {
                 for name in names {
                     let entry = lock.skills.get(&name).expect("grouped lock entry");

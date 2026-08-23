@@ -3,11 +3,11 @@ use crate::install::{marker_for, read_marker, write_marker};
 use crate::lockfile::{Mode, Resolved};
 use crate::output::Envelope;
 use crate::scope::Scope;
-use crate::source::acquire_repository;
+use crate::source::acquire_many;
 use crate::transaction::atomic_write;
 use anyhow::{bail, Context, Result};
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 pub(super) fn sync(
     scope: &Scope,
@@ -18,16 +18,20 @@ pub(super) fn sync(
     let lock = load_lock(scope)?;
     let names = select_names(&lock, selected)?;
 
-    // Acquire each distinct (repository, pinned commit) pair once, the same
-    // grouping `status`'s upstream_states uses, so several entries vendored
-    // from the same source at the same pin share a single acquisition. Groups
-    // are acquired lazily in the names' existing order, on each group's first
-    // encounter, so a run with several broken sources still fails on the same
-    // source the prior one-acquisition-per-entry code would have hit first.
-    // Every acquisition happens here, strictly before any destination,
-    // marker, or lock mutation below, so a failed acquisition still aborts
-    // the run with nothing written.
-    let mut acquired = BTreeMap::new();
+    // Build the distinct (repository, pinned commit) groups in the names'
+    // first-encounter order, the same grouping `status`'s upstream_states
+    // uses, so several entries vendored from the same source at the same pin
+    // share a single acquisition. Every group is then acquired concurrently
+    // (bounded inside `acquire_many`), all results are collected, and only
+    // then is the first-encounter order walked to propagate the first error
+    // in that order. This keeps the surfaced error identical to the prior
+    // one-acquisition-per-entry, first-broken-source behavior regardless of
+    // which acquisition happens to finish first on the wall clock. Every
+    // acquisition happens here, strictly before any destination, marker, or
+    // lock mutation below, so a failed acquisition still aborts the run with
+    // nothing written.
+    let mut group_order = Vec::new();
+    let mut seen = HashSet::new();
     for name in &names {
         let entry = lock.skills.get(name).expect("selected entry");
         if entry.mode == Mode::Local {
@@ -36,9 +40,24 @@ pub(super) fn sync(
         let source = entry.source.as_ref().expect("validated lock");
         let resolved = entry.resolved.as_ref().expect("validated lock");
         let key = (source.repository.clone(), resolved.commit.clone());
-        if let std::collections::btree_map::Entry::Vacant(slot) = acquired.entry(key.clone()) {
-            slot.insert(acquire_repository(&key.0, Some(&key.1))?);
+        if seen.insert(key.clone()) {
+            group_order.push(key);
         }
+    }
+    let group_results = acquire_many(&group_order);
+    let mut acquired = BTreeMap::new();
+    let mut first_error = None;
+    for (key, result) in group_order.into_iter().zip(group_results) {
+        match result {
+            Ok(repository) => {
+                acquired.insert(key, repository);
+            }
+            Err(error) if first_error.is_none() => first_error = Some(error),
+            Err(_) => {}
+        }
+    }
+    if let Some(error) = first_error {
+        return Err(error);
     }
 
     let mut prepared = Vec::new();
@@ -108,16 +127,20 @@ pub(super) fn update(
     let names = select_names(&lock, selected)?;
     let original = lock.clone();
 
-    // Acquire each distinct (repository, followed reference) pair once, the
-    // same grouping `status`'s upstream_states uses, so several entries that
-    // track the same branch or tag share a single acquisition. Groups are
-    // acquired lazily in the names' existing order, on each group's first
-    // encounter, so a run with several broken sources still fails on the same
-    // source the prior one-acquisition-per-entry code would have hit first.
-    // Every acquisition happens here, strictly before any destination,
-    // marker, or lock mutation below, so a failed acquisition still aborts
-    // the run with nothing written.
-    let mut acquired = BTreeMap::new();
+    // Build the distinct (repository, followed reference) groups in the
+    // names' first-encounter order, the same grouping `status`'s
+    // upstream_states uses, so several entries that track the same branch or
+    // tag share a single acquisition. Every group is then acquired
+    // concurrently (bounded inside `acquire_many`), all results are
+    // collected, and only then is the first-encounter order walked to
+    // propagate the first error in that order. This keeps the surfaced error
+    // identical to the prior one-acquisition-per-entry, first-broken-source
+    // behavior regardless of which acquisition happens to finish first on the
+    // wall clock. Every acquisition happens here, strictly before any
+    // destination, marker, or lock mutation below, so a failed acquisition
+    // still aborts the run with nothing written.
+    let mut group_order = Vec::new();
+    let mut seen = HashSet::new();
     for name in &names {
         let old = original.skills.get(name).expect("selected entry");
         if old.mode == Mode::Local {
@@ -125,9 +148,24 @@ pub(super) fn update(
         }
         let source = old.source.as_ref().expect("validated lock");
         let key = (source.repository.clone(), source.reference.clone());
-        if let std::collections::btree_map::Entry::Vacant(slot) = acquired.entry(key.clone()) {
-            slot.insert(acquire_repository(&key.0, Some(&key.1))?);
+        if seen.insert(key.clone()) {
+            group_order.push(key);
         }
+    }
+    let group_results = acquire_many(&group_order);
+    let mut acquired = BTreeMap::new();
+    let mut first_error = None;
+    for (key, result) in group_order.into_iter().zip(group_results) {
+        match result {
+            Ok(repository) => {
+                acquired.insert(key, repository);
+            }
+            Err(error) if first_error.is_none() => first_error = Some(error),
+            Err(_) => {}
+        }
+    }
+    if let Some(error) = first_error {
+        return Err(error);
     }
 
     let mut prepared = Vec::new();
