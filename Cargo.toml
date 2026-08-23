@@ -2,7 +2,7 @@
 name = "skillctl"
 version = "0.3.0"
 edition = "2021"
-description = "Reproducible project-local and global Codex skill manager"
+description = "Reproducible project-local and global agent skill manager"
 license = "MIT"
 
 [dependencies]
