@@ -288,3 +288,44 @@ fn local_entries_are_project_owned_and_have_no_upstream_dimension() {
     assert_eq!(skill["upstream_status"], "not_applicable");
     assert_eq!(skill["recommended_action"], "project-owned; manage locally");
 }
+
+#[test]
+fn status_recommended_actions_carry_the_global_scope_flag() {
+    let fixture = Fixture::new();
+    let home = fixture._temp.path().join("home");
+    fs::create_dir_all(&home).unwrap();
+    assert_ok(
+        fixture
+            .command()
+            .env("SKILLCTL_HOME", &home)
+            .args(["init", "--global"])
+            .output()
+            .unwrap(),
+    );
+    assert_ok(
+        fixture
+            .command()
+            .env("SKILLCTL_HOME", &home)
+            .args([
+                "add",
+                fixture.repo.to_str().unwrap(),
+                "--path",
+                "skills/demo",
+                "--global",
+            ])
+            .output()
+            .unwrap(),
+    );
+    fixture.advance("two");
+
+    let output = fixture
+        .command()
+        .env("SKILLCTL_HOME", &home)
+        .args(["status", "--global", "--json"])
+        .output()
+        .unwrap();
+    assert_ok_ref(&output);
+    let skill = &json(&output)["skills"][0];
+    assert_eq!(skill["upstream_status"], "update_available");
+    assert_eq!(skill["recommended_action"], "skillctl --global update demo");
+}

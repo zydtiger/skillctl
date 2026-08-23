@@ -3,7 +3,7 @@ use crate::error::CommandFailure;
 use crate::install::{entry_state, skill_json, EntryState};
 use crate::lockfile::{LockFile, Mode, SourceSelector};
 use crate::output::Envelope;
-use crate::scope::Scope;
+use crate::scope::{Scope, ScopeKind};
 use crate::source::{acquire_repository, validate_skill_tree};
 use anyhow::Result;
 use serde_json::json;
@@ -96,7 +96,7 @@ pub(super) fn status(scope: &Scope, offline: bool) -> Result<(Envelope, Vec<Stri
     for (name, entry) in &lock.skills {
         let local = states.get(name).expect("known local status entry");
         let remote = upstream.get(name).expect("known upstream status entry");
-        let action = recommended_action(name, &local.state, remote.status);
+        let action = recommended_action(scope, name, &local.state, remote.status);
         let resolved = entry.resolved.as_ref();
         let mut record = skill_json(name, entry, Some(local));
         record["local_status"] = json!(local.state);
@@ -273,43 +273,49 @@ fn upstream_states(lock: &LockFile, offline: bool) -> BTreeMap<String, UpstreamS
     states
 }
 
-fn recommended_action(name: &str, local: &str, upstream: &str) -> String {
+fn recommended_action(scope: &Scope, name: &str, local: &str, upstream: &str) -> String {
     if local == "local" {
         return "project-owned; manage locally".to_owned();
     }
+    // Suggested commands must carry the invoked scope, or copying them from a
+    // `--global` run would act on the project lock instead.
+    let ctl = match scope.kind {
+        ScopeKind::Project => "skillctl",
+        ScopeKind::Global => "skillctl --global",
+    };
     let upstream_action = || match upstream {
-        "update_available" => Some(format!("skillctl update {name}")),
-        "source_advanced" => Some(format!("skillctl update {name} (pin only)")),
+        "update_available" => Some(format!("{ctl} update {name}")),
+        "source_advanced" => Some(format!("{ctl} update {name} (pin only)")),
         "unreachable" => Some("retry; verify repository/ref access".to_owned()),
         "invalid" => Some("fix upstream selected skill".to_owned()),
-        "not_checked" => Some("run skillctl status online".to_owned()),
+        "not_checked" => Some(format!("run {ctl} status online")),
         _ => None,
     };
     match (local, upstream) {
-        ("missing", "update_available" | "source_advanced") => format!("skillctl update {name}"),
+        ("missing", "update_available" | "source_advanced") => format!("{ctl} update {name}"),
         ("modified", "update_available" | "source_advanced") => {
-            format!("review: skillctl diff {name}; then skillctl update {name} --force")
+            format!("review: {ctl} diff {name}; then {ctl} update {name} --force")
         }
         ("invalid", "update_available" | "source_advanced") => {
-            format!("review, then skillctl update {name} --force")
+            format!("review, then {ctl} update {name} --force")
         }
         ("missing", "unreachable") => {
-            format!("verify repository/ref access; then skillctl sync {name}")
+            format!("verify repository/ref access; then {ctl} sync {name}")
         }
         ("modified", "unreachable") => {
-            format!("review: skillctl diff {name}; verify repository/ref access")
+            format!("review: {ctl} diff {name}; verify repository/ref access")
         }
         ("invalid", "unreachable") => {
-            format!("verify repository/ref access; review, then skillctl sync {name} --force")
+            format!("verify repository/ref access; review, then {ctl} sync {name} --force")
         }
-        ("missing", "invalid") => format!("fix upstream selected skill; then skillctl sync {name}"),
+        ("missing", "invalid") => format!("fix upstream selected skill; then {ctl} sync {name}"),
         ("modified", "invalid") => {
-            format!("review: skillctl diff {name}; fix upstream selected skill")
+            format!("review: {ctl} diff {name}; fix upstream selected skill")
         }
         ("invalid", "invalid") => "fix local and upstream skill structure".to_owned(),
-        ("missing", _) => format!("skillctl sync {name}"),
-        ("modified", _) => format!("review: skillctl diff {name}"),
-        ("invalid", _) => format!("review, then skillctl sync {name} --force"),
+        ("missing", _) => format!("{ctl} sync {name}"),
+        ("modified", _) => format!("review: {ctl} diff {name}"),
+        ("invalid", _) => format!("review, then {ctl} sync {name} --force"),
         _ => upstream_action().unwrap_or_else(|| "none".to_owned()),
     }
 }
