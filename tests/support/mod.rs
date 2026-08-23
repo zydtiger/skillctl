@@ -196,6 +196,22 @@ impl GitSpy {
             .filter(|line| line.split_whitespace().any(|token| token == "clone"))
             .count()
     }
+
+    /// Number of logged invocations that transfer objects from a source, i.e.
+    /// `git clone` or `git fetch` calls. Shallow acquisition fetches a
+    /// commit-addressed pin into a fresh bare repository instead of cloning,
+    /// so a test asserting one acquisition per distinct source must count
+    /// both shapes.
+    pub(crate) fn acquisition_invocations(&self) -> usize {
+        fs::read_to_string(&self.log)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| {
+                line.split_whitespace()
+                    .any(|token| token == "clone" || token == "fetch")
+            })
+            .count()
+    }
 }
 
 fn which_git() -> String {

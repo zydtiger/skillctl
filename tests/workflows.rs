@@ -506,7 +506,7 @@ fn update_clones_shared_repository_once_for_multiple_vendored_entries() {
 }
 
 #[test]
-fn sync_clones_shared_repository_once_for_multiple_pinned_entries() {
+fn sync_acquires_shared_repository_once_for_multiple_pinned_entries() {
     let fixture = Fixture::new();
     write_skill(&fixture.repo.join("skills/extra"), "extra", "one");
     git(&fixture.repo, &["add", "."]);
@@ -538,7 +538,10 @@ fn sync_clones_shared_repository_once_for_multiple_pinned_entries() {
         .output()
         .unwrap();
     assert_ok_ref(&output);
-    assert_eq!(spy.clone_invocations(), 1);
+    // Shallow acquisition satisfies a pinned tip commit with a single
+    // commit-addressed `git fetch` rather than a `git clone`, so count
+    // object-transferring invocations of either shape.
+    assert_eq!(spy.acquisition_invocations(), 1);
 
     let changes = json(&output)["changes"].as_array().unwrap().clone();
     let actions: Vec<(String, String)> = changes
