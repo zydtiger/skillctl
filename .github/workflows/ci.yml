@@ -24,9 +24,9 @@ jobs:
         with:
           enable-cache: false
       - name: Commit-stage hooks
-        run: uvx prek run --all-files
+        run: uvx prek@0.4.14 run --all-files
       - name: Push-stage hooks
-        run: uvx prek run --all-files --hook-stage pre-push
+        run: uvx prek@0.4.14 run --all-files --hook-stage pre-push
       - name: Tests
         run: cargo test
       - name: Release build
