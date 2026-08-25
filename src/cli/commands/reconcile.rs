@@ -11,12 +11,25 @@ use std::collections::{BTreeMap, HashSet};
 
 pub(super) fn sync(
     scope: &Scope,
-    selected: Option<&str>,
+    selected: &[String],
     force: bool,
     dry_run: bool,
 ) -> Result<(Envelope, Vec<String>)> {
     let lock = load_lock(scope)?;
     let names = select_names(&lock, selected)?;
+
+    // Reject an explicitly named `mode: local` entry before any network
+    // acquisition starts: local files are project-owned, so syncing one is
+    // always refused regardless of whether its source is even reachable.
+    // The bare, all-entries form skips local entries silently instead, in
+    // the loop below.
+    if !selected.is_empty() {
+        for name in &names {
+            if lock.skills.get(name).expect("selected entry").mode == Mode::Local {
+                bail!("cannot sync local entry `{name}`; local files are project-owned");
+            }
+        }
+    }
 
     // Build the distinct (repository, pinned commit) groups in the names'
     // first-encounter order, the same grouping `status`'s upstream_states
@@ -65,9 +78,9 @@ pub(super) fn sync(
     for name in names {
         let entry = lock.skills.get(&name).expect("selected entry");
         if entry.mode == Mode::Local {
-            if selected.is_some() {
-                bail!("cannot sync local entry `{name}`; local files are project-owned");
-            }
+            // Only reachable for the bare, all-entries form: an explicitly
+            // named local entry was already rejected above, before
+            // acquisition.
             skipped.push(name);
             continue;
         }
@@ -119,13 +132,26 @@ pub(super) fn sync(
 
 pub(super) fn update(
     scope: &Scope,
-    selected: Option<&str>,
+    selected: &[String],
     force: bool,
     dry_run: bool,
 ) -> Result<(Envelope, Vec<String>)> {
     let mut lock = load_lock(scope)?;
     let names = select_names(&lock, selected)?;
     let original = lock.clone();
+
+    // Reject an explicitly named `mode: local` entry before any network
+    // acquisition starts: local files are project-owned, so updating one is
+    // always refused regardless of whether its source is even reachable.
+    // The bare, all-entries form leaves local entries untouched silently
+    // instead, in the loop below.
+    if !selected.is_empty() {
+        for name in &names {
+            if original.skills.get(name).expect("selected entry").mode == Mode::Local {
+                bail!("cannot update local entry `{name}`; local files are project-owned");
+            }
+        }
+    }
 
     // Build the distinct (repository, followed reference) groups in the
     // names' first-encounter order, the same grouping `status`'s
@@ -175,9 +201,9 @@ pub(super) fn update(
     for name in names {
         let old = original.skills.get(&name).expect("selected entry");
         if old.mode == Mode::Local {
-            if selected.is_some() {
-                bail!("cannot update local entry `{name}`; local files are project-owned");
-            }
+            // Only reachable for the bare, all-entries form: an explicitly
+            // named local entry was already rejected above, before
+            // acquisition.
             lines.push(format!("left local entry `{name}` untouched"));
             continue;
         }

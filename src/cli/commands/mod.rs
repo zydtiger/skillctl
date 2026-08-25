@@ -36,13 +36,11 @@ pub(super) fn execute(cli: &Cli, scope: &Scope) -> Result<(Envelope, Vec<String>
                 cli.dry_run,
             )
         }
-        Command::Sync { name } => reconcile::sync(scope, name.as_deref(), cli.force, cli.dry_run),
-        Command::Check { name } => inspect::check(scope, name.as_deref()),
+        Command::Sync { names } => reconcile::sync(scope, names, cli.force, cli.dry_run),
+        Command::Check { names } => inspect::check(scope, names),
         Command::Status { offline } => inspect::status(scope, *offline),
-        Command::Diff { name } => diff::run(scope, name.as_deref()),
-        Command::Update { name } => {
-            reconcile::update(scope, name.as_deref(), cli.force, cli.dry_run)
-        }
+        Command::Diff { names } => diff::run(scope, names),
+        Command::Update { names } => reconcile::update(scope, names, cli.force, cli.dry_run),
         Command::Remove { name } => remove::run(scope, name, cli.dry_run),
         Command::List => inspect::list(scope),
     }

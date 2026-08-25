@@ -7,6 +7,7 @@ use crate::scope::Scope;
 use crate::source::Snapshot;
 use crate::transaction::replace_destination_and_lock;
 use anyhow::{bail, Result};
+use std::collections::HashSet;
 use std::fs;
 
 pub(super) fn load_lock(scope: &Scope) -> Result<LockFile> {
@@ -14,15 +15,28 @@ pub(super) fn load_lock(scope: &Scope) -> Result<LockFile> {
     LockFile::load(&scope.lock_file)
 }
 
-pub(super) fn select_names(lock: &LockFile, selected: Option<&str>) -> Result<Vec<String>> {
-    if let Some(name) = selected {
+/// Resolve the entries a command should operate on. An empty `selected`
+/// slice keeps the long-standing bare-invocation meaning of "every lock
+/// entry"; a non-empty slice validates that every named entry exists,
+/// failing the whole invocation on the first unknown name before any
+/// acquisition or mutation happens, and de-duplicates repeats so an entry
+/// named more than once is still processed exactly once, in
+/// first-occurrence order.
+pub(super) fn select_names(lock: &LockFile, selected: &[String]) -> Result<Vec<String>> {
+    if selected.is_empty() {
+        return Ok(lock.skills.keys().cloned().collect());
+    }
+    let mut names = Vec::new();
+    let mut seen = HashSet::new();
+    for name in selected {
         if !lock.skills.contains_key(name) {
             bail!("lock entry `{name}` does not exist");
         }
-        Ok(vec![name.to_owned()])
-    } else {
-        Ok(lock.skills.keys().cloned().collect())
+        if seen.insert(name.as_str()) {
+            names.push(name.clone());
+        }
     }
+    Ok(names)
 }
 
 pub(super) fn ensure_replace_allowed(

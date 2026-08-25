@@ -48,20 +48,32 @@ pub(super) enum Command {
         #[arg(long = "ref")]
         reference: Option<String>,
     },
-    /// Reproduce exact locked commits without advancing refs
-    Sync { name: Option<String> },
-    /// Check installed integrity without network access
-    Check { name: Option<String> },
+    /// Reproduce exact locked commits without advancing refs; omit NAME for all entries
+    Sync {
+        #[arg(value_name = "NAME")]
+        names: Vec<String>,
+    },
+    /// Check installed integrity without network access; omit NAME for all entries
+    Check {
+        #[arg(value_name = "NAME")]
+        names: Vec<String>,
+    },
     /// Show local integrity and upstream lifecycle state
     Status {
         /// Skip upstream access and report local state only
         #[arg(long)]
         offline: bool,
     },
-    /// Compare installed content with the pinned source snapshot
-    Diff { name: Option<String> },
-    /// Advance vendored entries along their configured source refs
-    Update { name: Option<String> },
+    /// Compare installed content with the pinned source snapshot; omit NAME for all entries
+    Diff {
+        #[arg(value_name = "NAME")]
+        names: Vec<String>,
+    },
+    /// Advance vendored entries along their configured source refs; omit NAME for all entries
+    Update {
+        #[arg(value_name = "NAME")]
+        names: Vec<String>,
+    },
     /// Remove a lock entry and, when safely managed, its vendored tree
     Remove { name: String },
     /// List lock entries and pins

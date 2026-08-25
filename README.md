@@ -96,16 +96,18 @@ Project-vendored skill folders and `.agents/skills.lock.yaml` should normally be
 skillctl init
 skillctl add <repository> --path <source-path> [--name NAME] [--ref REF]
 skillctl add <repository> --file <path-to-SKILL.md> --name NAME [--ref REF]
-skillctl sync [NAME]
-skillctl check [NAME]
+skillctl sync [NAME]...
+skillctl check [NAME]...
 skillctl status [--offline]
-skillctl diff [NAME]
-skillctl update [NAME]
+skillctl diff [NAME]...
+skillctl update [NAME]...
 skillctl remove <NAME>
 skillctl list
 ```
 
 Use `-g` or `--global` for global scope. `--json` emits one stable JSON document on stdout. `--dry-run` is accepted only for mutating commands and previews changes without writes. `--force` is accepted only by replacement operations (`sync` and `update`) and is required before overwriting changed managed content. Misleading flag/command combinations are errors.
+
+`sync`, `check`, `diff`, and `update` each accept zero or more `NAME` arguments. With no names, the command applies to every lock entry, exactly as before; this is the default when `update` is run bare. With one or more names, it applies to exactly that subset, so a stale set spanning several entries needs only one invocation, for example `skillctl update name-a name-b`. Every named entry must exist in the lock; an unknown name fails the whole invocation before any acquisition, lock, or destination mutation, and a name repeated more than once is processed only once. `remove` still takes exactly one `NAME`.
 
 `add` clones a Git URL or local Git repository, discovers its default branch when `--ref` is omitted, validates the selected skill, and pins the resolved commit and digest. Use `--path DIRECTORY` to vendor a complete skill tree, including its resources. Use `--file PATH/TO/SKILL.md --name DESTINATION` to install only that file as the destination's root `SKILL.md`; `--name` is required because it defines the containing folder. `--path` and `--file` are mutually exclusive. Local repository paths are stored as absolute paths so later commands work from nested project directories.
 
@@ -127,7 +129,7 @@ Pin-only advances are written before any content update in the same run, so the 
 
 `check` is the deterministic offline integrity gate. It validates the lock and schema, destination safety, installed skill structure, managed markers, declared-name conflicts, and vendored digests without acquiring any source. A clean run prints one concise `OK` summary; any integrity failure is actionable and exits nonzero. It never reports update availability.
 
-`status` is the lifecycle dashboard. By default it queries each unique repository/ref once, then compares every selected skill's upstream digest with its locked digest. Its `LOCAL` column reports `clean`, `modified`, `missing`, `invalid`, or project-owned `local` state. Its `UPSTREAM` column reports `current`, `update_available`, `source_advanced` when the ref moved but that selected skill did not change, `unreachable`, `invalid`, or `not_applicable` for local entries. An unreachable source does not discard local integrity results or make a successfully produced dashboard fail. Use `status --offline` to skip all source access; vendored entries then report `not_checked`, with one footer explaining the skipped upstream checks.
+`status` is the lifecycle dashboard. By default it queries each unique repository/ref once, then compares every selected skill's upstream digest with its locked digest. Its `LOCAL` column reports `clean`, `modified`, `missing`, `invalid`, or project-owned `local` state. Its `UPSTREAM` column reports `current`, `update_available`, `source_advanced` when the ref moved but that selected skill did not change, `unreachable`, `invalid`, or `not_applicable` for local entries. An unreachable source does not discard local integrity results or make a successfully produced dashboard fail. Use `status --offline` to skip all source access; vendored entries then report `not_checked`, with one footer explaining the skipped upstream checks. When two or more entries' `ACTION` column is a plain `update NAME` suggestion, including its `(pin only)` form, the human-readable table is followed by one combined line naming every such entry for a single `update` invocation, for example `run all: skillctl update name-a name-b`; entries that need a review or `--force` are never folded into it. The `--json` document is unaffected, and each entry's own `recommended_action` field is unchanged.
 
 For example, install only this repository's root skill without vendoring its Rust sources:
 
