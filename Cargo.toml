@@ -1,6 +1,6 @@
 [package]
 name = "skillctl"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 description = "Reproducible project-local and global agent skill manager"
 license = "MIT"
