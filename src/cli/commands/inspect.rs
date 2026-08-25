@@ -27,7 +27,7 @@ struct StatusRow {
     action: String,
 }
 
-pub(super) fn check(scope: &Scope, selected: Option<&str>) -> Result<(Envelope, Vec<String>)> {
+pub(super) fn check(scope: &Scope, selected: &[String]) -> Result<(Envelope, Vec<String>)> {
     let lock = load_lock(scope)?;
     let names = select_names(&lock, selected)?;
     let mut envelope = Envelope::new(scope);
@@ -56,9 +56,7 @@ pub(super) fn check(scope: &Scope, selected: Option<&str>) -> Result<(Envelope, 
     }
     for (declared_name, entries) in declared {
         if entries.len() > 1
-            && selected
-                .map(|selected| entries.iter().any(|entry| entry == selected))
-                .unwrap_or(true)
+            && (selected.is_empty() || entries.iter().any(|entry| selected.contains(entry)))
         {
             failures.push(format!(
                 "declared skill name `{declared_name}` is duplicated by {}",
@@ -92,11 +90,24 @@ pub(super) fn status(scope: &Scope, offline: bool) -> Result<(Envelope, Vec<Stri
     let mut envelope = Envelope::new(scope);
     let mut rows = Vec::new();
     let mut source_errors = BTreeSet::new();
+    let ctl = scope_ctl(scope);
+    // Names whose recommended action is the plain `update NAME` command,
+    // including its `(pin only)` form: both are satisfied by the exact same
+    // invocation, unlike the `review: ...; then ... --force` variants, which
+    // need deliberate handling and stay excluded. Collected in table order,
+    // so a stale subset spanning several entries can be pointed at one
+    // combined invocation below the table.
+    let mut update_candidates = Vec::new();
 
     for (name, entry) in &lock.skills {
         let local = states.get(name).expect("known local status entry");
         let remote = upstream.get(name).expect("known upstream status entry");
         let action = recommended_action(scope, name, &local.state, remote.status);
+        if action == format!("{ctl} update {name}")
+            || action == format!("{ctl} update {name} (pin only)")
+        {
+            update_candidates.push(name.clone());
+        }
         let resolved = entry.resolved.as_ref();
         let mut record = skill_json(name, entry, Some(local));
         record["local_status"] = json!(local.state);
@@ -141,6 +152,12 @@ pub(super) fn status(scope: &Scope, offline: bool) -> Result<(Envelope, Vec<Stri
     }
 
     let mut lines = render_status_table(&rows);
+    if update_candidates.len() > 1 {
+        lines.push(format!(
+            "run all: {ctl} update {}",
+            update_candidates.join(" ")
+        ));
+    }
     if offline
         && lock
             .skills
@@ -287,16 +304,21 @@ fn upstream_states(lock: &LockFile, offline: bool) -> BTreeMap<String, UpstreamS
     states
 }
 
+/// Scope-qualified command prefix suggested commands are built from. It must
+/// carry the invoked scope, or copying a suggestion from a `--global` run
+/// would act on the project lock instead.
+fn scope_ctl(scope: &Scope) -> &'static str {
+    match scope.kind {
+        ScopeKind::Project => "skillctl",
+        ScopeKind::Global => "skillctl --global",
+    }
+}
+
 fn recommended_action(scope: &Scope, name: &str, local: &str, upstream: &str) -> String {
     if local == "local" {
         return "project-owned; manage locally".to_owned();
     }
-    // Suggested commands must carry the invoked scope, or copying them from a
-    // `--global` run would act on the project lock instead.
-    let ctl = match scope.kind {
-        ScopeKind::Project => "skillctl",
-        ScopeKind::Global => "skillctl --global",
-    };
+    let ctl = scope_ctl(scope);
     let upstream_action = || match upstream {
         "update_available" => Some(format!("{ctl} update {name}")),
         "source_advanced" => Some(format!("{ctl} update {name} (pin only)")),

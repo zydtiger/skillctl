@@ -7,17 +7,31 @@ use crate::source::acquire;
 use anyhow::{bail, Result};
 use serde_json::json;
 
-pub(super) fn run(scope: &Scope, selected: Option<&str>) -> Result<(Envelope, Vec<String>)> {
+pub(super) fn run(scope: &Scope, selected: &[String]) -> Result<(Envelope, Vec<String>)> {
     let lock = load_lock(scope)?;
     let names = select_names(&lock, selected)?;
+
+    // Reject an explicitly named `mode: local` entry before any network
+    // acquisition starts: local files have no pinned source to diff against,
+    // so refusing them is unconditional regardless of any other named
+    // entry's source reachability. The bare, all-entries form skips local
+    // entries silently instead, in the loop below.
+    if !selected.is_empty() {
+        for name in &names {
+            if lock.skills.get(name).expect("selected entry").mode == Mode::Local {
+                bail!("cannot diff local entry `{name}` against a pinned source");
+            }
+        }
+    }
+
     let mut envelope = Envelope::new(scope);
     let mut lines = Vec::new();
     for name in names {
         let entry = lock.skills.get(&name).expect("selected entry");
         if entry.mode == Mode::Local {
-            if selected.is_some() {
-                bail!("cannot diff local entry `{name}` against a pinned source");
-            }
+            // Only reachable for the bare, all-entries form: an explicitly
+            // named local entry was already rejected above, before
+            // acquisition.
             continue;
         }
         validate_destination_location(scope, entry)?;
