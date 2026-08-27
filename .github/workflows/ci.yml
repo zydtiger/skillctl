@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -12,26 +16,31 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Add toolchain components
         run: rustup component add rustfmt clippy
-      # uv is here only to run prek. `enable-cache` defaults to `auto`, which is
-      # on for this event, and its key needs a Python dependency manifest this
-      # repository does not have, so turn it off rather than keep a cache that
-      # can never be invalidated.
-      - uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: false
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Commit-stage hooks
-        run: uvx prek@0.4.14 run --all-files
+        uses: j178/prek-action@4e14d07f9231acabce116ccfca13b13dd9755ece # v3.0.0
+        with:
+          prek-version: "0.4.x"
       - name: Push-stage hooks
-        run: uvx prek@0.4.14 run --all-files --hook-stage pre-push
+        uses: j178/prek-action@4e14d07f9231acabce116ccfca13b13dd9755ece # v3.0.0
+        with:
+          prek-version: "0.4.x"
+          extra-args: --all-files --hook-stage pre-push
       - name: Tests
-        run: cargo test
+        run: cargo test --locked
       - name: Release build
         run: cargo build --release
       - name: Install smoke test
+        # Reuse the release artifacts from the previous step instead of
+        # letting cargo install compile a third time in its own target dir.
         run: |
-          cargo install --path . --root "$RUNNER_TEMP/skillctl"
+          cargo install --path . --root "$RUNNER_TEMP/skillctl" --locked --target-dir target
           "$RUNNER_TEMP/skillctl/bin/skillctl" --version
